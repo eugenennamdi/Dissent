@@ -1,10 +1,12 @@
 export const DISSENT_ERROR_CODES = [
   'INVALID_INPUT',
+  'CONFIGURATION_ERROR',
   'UNSUPPORTED_MARKET',
   'EVIDENCE_UNAVAILABLE',
   'EVIDENCE_STALE',
   'EXTERNAL_PROVIDER_ERROR',
   'MODEL_OUTPUT_INVALID',
+  'OUTPUT_TRUNCATED',
   'ANALYSIS_FAILED',
   'TIMEOUT',
 ] as const;
@@ -36,6 +38,13 @@ export class DissentError extends Error {
 
   static invalidInput(message: string, details?: Record<string, unknown>): DissentError {
     return new DissentError('INVALID_INPUT', message, { details, retryable: false });
+  }
+
+  static configurationError(message: string, details?: Record<string, unknown>): DissentError {
+    return new DissentError('CONFIGURATION_ERROR', message, {
+      details,
+      retryable: false,
+    });
   }
 
   static unsupportedMarket(market: string, details?: Record<string, unknown>): DissentError {
@@ -74,6 +83,14 @@ export class DissentError extends Error {
     return new DissentError(
       'MODEL_OUTPUT_INVALID',
       `AI model output failed validation during ${operation}: ${reason}`,
+      { details, retryable: true }
+    );
+  }
+
+  static outputTruncated(operation: string, details?: Record<string, unknown>): DissentError {
+    return new DissentError(
+      'OUTPUT_TRUNCATED',
+      `AI model output was truncated during ${operation}.`,
       { details, retryable: true }
     );
   }

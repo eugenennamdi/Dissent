@@ -22,6 +22,11 @@ describe('Thesis Contracts & Invariants', () => {
     expect(parsed.schemaVersion).toBe(1);
   });
 
+  it('preserves leading and trailing whitespace in raw thesis text', () => {
+    const rawText = '  ETH will outperform BTC.  ';
+    expect(ThesisInputV1Schema.parse({ ...validThesisInput, rawText }).rawText).toBe(rawText);
+  });
+
   it('rejects an empty or too-short ThesisInput', () => {
     expect(() =>
       ThesisInputV1Schema.parse({

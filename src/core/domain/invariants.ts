@@ -133,6 +133,12 @@ export function assertArgumentEvidenceGrounding(
   argument: ArgumentV1,
   ledger: EvidenceLedgerV1
 ): void {
+  if (argument.thesisId !== ledger.thesisId) {
+    throw DissentError.invalidInput(
+      `Domain Invariant Violation: Argument thesis ${argument.thesisId} does not match evidence ledger thesis ${ledger.thesisId}.`
+    );
+  }
+
   const ledgerIds = new Set(ledger.items.map((i) => i.id));
   for (const point of argument.points) {
     for (const evidenceId of point.evidenceIds) {

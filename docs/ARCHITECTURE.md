@@ -36,7 +36,7 @@ Dissent enforces strict separation between domain logic and external infrastruct
 ### Core Domain (`src/core/`)
 - `contracts/`: Versioned Zod schemas and derived TypeScript types for all product entities (`ThesisInputV1`, `StructuredThesisV1`, `AssumptionV1`, `EvidenceV1`, `EvidenceLedgerV1`, `ArgumentV1`, `StressScenarioV1`, `InvalidationConditionV1`, `DissentBriefV1`, `HumanDecisionV1`, `AnalysisRunV1`).
 - `domain/invariants.ts`: Invariant assertion logic (human decision checks, verbatim thesis preservation, evidence ledger referential integrity, state machine transitions).
-- `errors/domain-errors.ts`: Typed domain error classes (`INVALID_INPUT`, `UNSUPPORTED_MARKET`, `EVIDENCE_UNAVAILABLE`, `EVIDENCE_STALE`, `EXTERNAL_PROVIDER_ERROR`, `MODEL_OUTPUT_INVALID`, `ANALYSIS_FAILED`, `TIMEOUT`).
+- `errors/domain-errors.ts`: Typed domain error classes (`INVALID_INPUT`, `CONFIGURATION_ERROR`, `UNSUPPORTED_MARKET`, `EVIDENCE_UNAVAILABLE`, `EVIDENCE_STALE`, `EXTERNAL_PROVIDER_ERROR`, `MODEL_OUTPUT_INVALID`, `OUTPUT_TRUNCATED`, `ANALYSIS_FAILED`, `TIMEOUT`).
 
 ### Market Desk Boundary (`src/server/market/`)
 - `market-desk.port.ts`: The generic domain interface for market observation collection.
@@ -54,13 +54,21 @@ Dissent enforces strict separation between domain logic and external infrastruct
   - `stressTest(StructuredThesisV1, AssumptionV1[], EvidenceLedgerV1): Promise<{ stressScenarios, invalidationConditions, testedAssumptions }>`
   - `synthesizeBrief(params): Promise<DissentBriefV1>`
 - Strictly avoids generic `generate(prompt: string): Promise<string>` interfaces. Every operation takes domain contracts and returns domain contracts.
+- `deepseek-responses.client.ts`: fixed-host, server-only Responses API client using JSON Schema output, bounded input/output, low reasoning effort, native `fetch`, and typed provider failures. Trusted prompts use DeepSeek's top-level `instructions` field because `developer` messages are user-priority. It exposes no tools.
+- `deepseek-analyst.adapter.ts`: implements the Phase 2 structuring and argumentation ports. IDs, timestamps, stances, exact evidence quotations, and numeric facts are server-owned rather than model-authored.
+- `grounding.ts`: rejects invented references, decision language, model-authored numeric facts, and selected evidence whose observation type cannot support the interpretation.
+
+The default provider/model is DeepSeek `deepseek-flash` (currently DeepSeek-V4.1-Flash) with low reasoning effort. It provides native Responses JSON Schema output with lower listed pricing and higher concurrency than `deepseek-v4-pro`, making it the bounded default for extraction and evidence selection. `DEEPSEEK_API_KEY` is required; `DEEPSEEK_MODEL` is an optional deployment override.
+
+Output budgets and reasoning are operation-specific because DeepSeek counts reasoning and visible JSON together. Thesis structuring uses 1,800 tokens with low reasoning. Each evidence-rich argument uses a 6,000-token allowance with reasoning disabled; a live failure showed low reasoning consuming 4,541 of 6,000 output tokens before the Advocate JSON could finish. A `max_output_tokens` incomplete response is surfaced as typed `OUTPUT_TRUNCATED` with safe model, budget, reasoning, and token-usage metadata; truncated JSON is never parsed or accepted.
 
 ### Orchestration Boundary (`src/server/orchestration/`)
 - `orchestrator.port.ts`: Controls the lifecycle and transitions between analysis stages.
+- `intelligence-loop.ts`: implemented Phase 2 slice: structure → real market research → parallel grounded Advocate/Dissenter. It fails closed when market research is partial. Stress testing, synthesis, and persistence remain later phases.
 
 ---
 
-## 3. Future Orchestration Flow
+## 3. Orchestration Flow
 
 ```
 [Trader Raw Input]
@@ -105,8 +113,9 @@ Dissent enforces strict separation between domain logic and external infrastruct
 ## 4. Grounding & Tamper-Resistant Provenance
 
 1. **Deterministic Evidence Lineage**: Each `EvidenceV1` item carries an immutable `provenance` block recording the exact endpoint, source observation timestamp, local retrieval timestamp, content hash, and the selected upstream fields needed for audit.
-2. **Referential Integrity**: An argument point cannot claim an external observation unless its `evidenceIds` point to an entry in the run's `EvidenceLedgerV1`.
-3. **No LLM Fabrication**: Because the synthesis stage receives the completed `EvidenceLedgerV1`, any model hallucination that introduces unsourced market data violates the domain invariants and fails contract validation.
+2. **Referential and Thesis Integrity**: An argument point cannot claim an external observation unless its `evidenceIds` point to the same thesis's `EvidenceLedgerV1`.
+3. **Deterministic Facts**: Models select evidence IDs and write qualitative interpretations. The server inserts the ledger's exact claims into `ArgumentV1.reasoning`; model-authored digits, percentages, prices, or decision language are rejected.
+4. **Prompt-Injection Boundary**: Trader text and evidence are JSON-encoded untrusted data under a higher-priority fixed system instruction. The model has no browser, shell, wallet, exchange, or tool surface.
 
 ## 5. Phase 1 Bitget Integration
 

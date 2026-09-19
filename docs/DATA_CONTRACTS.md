@@ -27,13 +27,13 @@ Normalized hypothesis extracted from the raw input.
   - `id`: Unique thesis ID.
   - `thesisInputId`: Reference to `ThesisInputV1.id`.
   - `originalThesis`: Exact copy of `ThesisInputV1.rawText`.
-  - `market`: Normalized market symbol (e.g. `ETH/BTC`, `SOL/USDT`).
+  - `market`: Normalized market symbol. The implemented V1 intelligence loop accepts only `ETH/BTC`.
   - `baseAsset`: Base symbol (e.g. `ETH`).
   - `quoteAsset`: Quote symbol (e.g. `BTC`).
   - `claim`: Clear, falsifiable proposition statement.
   - `direction`: Enum (`LONG`, `SHORT`, `RELATIVE_LONG`, `RELATIVE_SHORT`, `NEUTRAL`, `VOLATILITY_EXPANSION`, `VOLATILITY_COMPRESSION`).
   - `timeHorizon`: Object with description and optional numeric `estimatedHours`.
-  - `catalysts`: Non-empty array of stated or inferred market drivers.
+  - `catalysts`: Array of trader-stated market drivers; it may be empty rather than forcing fabrication.
   - `createdAt`: ISO 8601 timestamp.
   - `schemaVersion`: Fixed literal `1`.
 
@@ -139,6 +139,8 @@ Structured argument case for or against the thesis.
   - `createdAt`: ISO 8601 timestamp.
 - **Invariants**:
   - Each point must reference at least one valid evidence ID from the `EvidenceLedgerV1`.
+  - Argument and ledger thesis IDs must match.
+  - Model output selects references and supplies qualitative interpretations only. The server copies exact evidence claims into reasoning and rejects model-authored numeric facts, decision language, unknown references, or observation types that cannot support a mentioned measurement.
 
 ---
 

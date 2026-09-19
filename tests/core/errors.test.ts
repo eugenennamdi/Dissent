@@ -30,4 +30,13 @@ describe('DissentError Model', () => {
     expect(err.retryable).toBe(true);
     expect(err.message).toContain('timed out after 5000ms');
   });
+
+  it('distinguishes retryable output truncation from malformed model output', () => {
+    const err = DissentError.outputTruncated('buildAdvocateCase', {
+      incompleteReason: 'max_output_tokens',
+    });
+    expect(err.code).toBe('OUTPUT_TRUNCATED');
+    expect(err.retryable).toBe(true);
+    expect(err.details?.incompleteReason).toBe('max_output_tokens');
+  });
 });

@@ -13,10 +13,11 @@
 
 ---
 
-### Phase 2: Thesis Structuring Engine
-- **Objective**: Implement `ThesisStructuringPort` in `src/server/ai/`.
-- **Logic**: Use structured model outputs (Zod schema constraint) to parse trader prompts into `StructuredThesisV1` and identify 2–4 explicit or inferred `AssumptionV1` items.
-- **Verification**: Test with diverse trader inputs (pairs like ETH/BTC, directional altcoin bets, macro hedged plays).
+### Phase 2: Grounded Intelligence Loop
+- **Status**: Implemented for the single canonical V1 thesis, `ETH/BTC`; other markets fail explicitly.
+- **Logic**: DeepSeek Responses JSON Schema output parses the verbatim thesis into `StructuredThesisV1` and explicit/inferred `AssumptionV1` items. The existing Bitget desk supplies the immutable ledger. Separate Advocate and Dissenter calls select ledger IDs and produce qualitative interpretations; the server inserts exact evidence claims and owns IDs, timestamps, and stances.
+- **Safety**: No AI tools, autonomous research, trading operations, fabricated numeric facts, human decisions, or partial-research argumentation.
+- **Verification**: Offline provider fixtures cover malformed outputs, injection attempts, invented/mismatched references, semantic evidence mismatch, missing evidence, timeouts, and partial research. Run the credentialed end-to-end proof with `DEEPSEEK_API_KEY=... npm run test:integration:ai`.
 
 ---
 
@@ -25,17 +26,16 @@
 - **Logic**:
   - Ingest raw Bitget data snapshots.
   - Convert into typed `EvidenceV1` items with strict `EvidenceProvenanceV1`.
-  - Calculate `EvidenceStanceV1` (`SUPPORTING`, `CONTRADICTING`, `NEUTRAL`) relative to the thesis claim.
+  - Preserve raw market observations as `NEUTRAL`; Advocate and Dissenter interpretations remain separate `ArgumentV1` artifacts rather than rewriting evidence stance.
   - Construct the immutable `EvidenceLedgerV1`.
 - **Verification**: Assert that all items satisfy `assertEvidenceLedgerIntegrity`.
 
 ---
 
-### Phase 4: Advocate + Dissenter Adversarial Desks
-- **Objective**: Implement `ArgumentationPort`.
-- **Advocate Desk**: Builds structured, evidence-backed arguments validating the thesis.
-- **Dissenter Desk**: Deliberately constructs the strongest counter-thesis, attacking specific assumptions using contradictory evidence items from the ledger.
-- **Verification**: Enforce `assertArgumentEvidenceGrounding` (no arguments without evidence IDs).
+### Phase 4: Advocate + Dissenter Adversarial Desks (completed in Phase 2 slice)
+- **Advocate Desk**: Builds the strongest interpretation permitted by the supplied ledger while acknowledging limits.
+- **Dissenter Desk**: Challenges the thesis and assumptions without treating absent or neutral evidence as proof of contradiction.
+- **Verification**: Enforces evidence and thesis linkage plus deterministic fact quotation.
 
 ---
 

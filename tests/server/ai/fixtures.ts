@@ -1,0 +1,201 @@
+import type { AssumptionV1 } from '@/core/contracts/assumption';
+import type { EvidenceLedgerV1, EvidenceV1 } from '@/core/contracts/evidence';
+import type { StructuredThesisV1, ThesisInputV1 } from '@/core/contracts/thesis';
+import type {
+  StructuredModelPort,
+  StructuredModelRequest,
+  StructuredModelResult,
+} from '@/server/ai/structured-model.port';
+import type { z } from 'zod';
+
+export const FIXED_AT = '2026-09-19T12:00:00.000Z';
+
+export const thesisInput: ThesisInputV1 = {
+  id: 'inp_ai_1',
+  rawText:
+    '  I think ETH will outperform BTC over the next forty eight hours because risk appetite is improving.  ',
+  submittedAt: FIXED_AT,
+  schemaVersion: 1,
+};
+
+export const extractionOutput = {
+  supported: true,
+  unsupportedReason: null,
+  market: 'ETH/BTC',
+  baseAsset: 'ETH',
+  quoteAsset: 'BTC',
+  claim: 'ETH will outperform BTC over the stated horizon',
+  direction: 'RELATIVE_LONG',
+  timeHorizon: { description: 'the next forty eight hours', estimatedHours: 48 },
+  catalysts: ['improving risk appetite'],
+  assumptions: [
+    {
+      claim: 'Risk appetite is improving',
+      type: 'EXPLICIT',
+      category: 'MARKET_REGIME',
+      challenge: 'Risk appetite may weaken during the horizon',
+      invalidationCondition: 'Broad risk conditions visibly deteriorate',
+    },
+    {
+      claim: 'Improving risk appetite benefits ETH more than BTC',
+      type: 'INFERRED',
+      category: 'CORRELATION',
+      challenge: 'BTC may capture the same risk demand more strongly',
+      invalidationCondition: 'ETH fails to strengthen relative to BTC',
+    },
+  ],
+} as const;
+
+export class QueueModel implements StructuredModelPort {
+  readonly requests: Array<StructuredModelRequest<z.ZodTypeAny>> = [];
+  private readonly outputs: unknown[];
+
+  constructor(outputs: unknown[]) {
+    this.outputs = [...outputs];
+  }
+
+  async generateStructured<TSchema extends z.ZodTypeAny>(
+    request: StructuredModelRequest<TSchema>
+  ): Promise<StructuredModelResult<z.infer<TSchema>>> {
+    this.requests.push(request);
+    const output = this.outputs.shift();
+    return {
+      data: request.schema.parse(output),
+      metadata: {
+        provider: 'DeepSeek',
+        model: 'test-model',
+        latencyMs: 12,
+        configuredOutputTokenBudget: request.maxOutputTokens,
+        configuredReasoningEffort: request.reasoningEffort ?? 'low',
+      },
+    };
+  }
+}
+
+export function makeStructuredThesis(id = 'th_ai_1'): StructuredThesisV1 {
+  return {
+    id,
+    thesisInputId: thesisInput.id,
+    originalThesis: thesisInput.rawText,
+    market: 'ETH/BTC',
+    baseAsset: 'ETH',
+    quoteAsset: 'BTC',
+    claim: 'ETH will outperform BTC over the stated horizon',
+    direction: 'RELATIVE_LONG',
+    timeHorizon: { description: 'the next forty eight hours', estimatedHours: 48 },
+    catalysts: ['improving risk appetite'],
+    createdAt: FIXED_AT,
+    schemaVersion: 1,
+  };
+}
+
+export function makeAssumptions(thesisId = 'th_ai_1'): AssumptionV1[] {
+  return extractionOutput.assumptions.map((item, index) => ({
+    id: `asm_${index}`,
+    thesisId,
+    ...item,
+    status: 'UNTESTED',
+    supportingEvidenceIds: [],
+    opposingEvidenceIds: [],
+    createdAt: FIXED_AT,
+    schemaVersion: 1,
+  }));
+}
+
+export function makeEvidenceLedger(thesisId = 'th_ai_1'): EvidenceLedgerV1 {
+  const items: EvidenceV1[] = [
+    {
+      id: 'ev_return',
+      thesisId,
+      claim: 'ETH/USDT spot changed 5% over the aligned interval.',
+      category: 'PRICE_ACTION',
+      stance: 'NEUTRAL',
+      nature: 'NUMERIC',
+      observation: {
+        type: 'INTERVAL_PRICE_CHANGE',
+        market: 'ETH/USDT',
+        instrumentType: 'SPOT',
+        providerSymbol: 'ETHUSDT',
+        interval: '1H',
+        periodStartAt: '2026-09-19T10:00:00.000Z',
+        periodEndAt: '2026-09-19T11:00:00.000Z',
+      },
+      provenance: {
+        sourceName: 'Bitget V3 Market API',
+        sourceType: 'EXCHANGE_API',
+        endpointOrLocator: 'https://api.bitget.com/api/v3/market/candles',
+        observedAt: '2026-09-19T11:00:00.000Z',
+        retrievedAt: FIXED_AT,
+        freshnessMode: 'HISTORICAL_RECORD',
+      },
+      value: '5',
+      unit: '%',
+      derivedFromEvidenceIds: [],
+      relatedAssumptionIds: [],
+      verifiable: true,
+      schemaVersion: 1,
+    },
+    {
+      id: 'ev_last',
+      thesisId,
+      claim: 'ETH/USDT last price was 2500 USDT per ETH.',
+      category: 'PRICE_ACTION',
+      stance: 'NEUTRAL',
+      nature: 'NUMERIC',
+      observation: {
+        type: 'LAST_PRICE',
+        market: 'ETH/USDT',
+        instrumentType: 'SPOT',
+        providerSymbol: 'ETHUSDT',
+      },
+      provenance: {
+        sourceName: 'Bitget V3 Market API',
+        sourceType: 'EXCHANGE_API',
+        endpointOrLocator: 'https://api.bitget.com/api/v3/market/tickers',
+        observedAt: FIXED_AT,
+        retrievedAt: FIXED_AT,
+        freshnessMode: 'AGE_SINCE_OBSERVATION',
+        freshnessWindowSeconds: 60,
+      },
+      value: '2500',
+      unit: 'USDT per ETH',
+      derivedFromEvidenceIds: [],
+      relatedAssumptionIds: [],
+      verifiable: true,
+      schemaVersion: 1,
+    },
+  ];
+  return {
+    id: 'led_ai_1',
+    thesisId,
+    items,
+    summary: {
+      totalCount: 2,
+      supportingCount: 0,
+      contradictingCount: 0,
+      neutralCount: 2,
+      staleCountAtAssembly: 0,
+      categoriesPresent: ['PRICE_ACTION'],
+    },
+    assembledAt: FIXED_AT,
+    schemaVersion: 1,
+  };
+}
+
+export function argumentDraft(
+  interpretation = 'This suggests relative momentum may favor the thesis'
+) {
+  return {
+    summaryInterpretation: 'Available market evidence may support the thesis while remaining limited',
+    points: [
+      {
+        title: 'Relative momentum evidence',
+        interpretation,
+        evidenceIds: ['ev_return'],
+        targetAssumptionIds: ['asm_1'],
+        weight: 'PRIMARY',
+      },
+    ],
+    counterweights: ['The evidence may not persist across the full thesis horizon'],
+  } as const;
+}

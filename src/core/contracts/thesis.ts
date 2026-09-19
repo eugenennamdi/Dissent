@@ -6,7 +6,9 @@ import { z } from 'zod';
  */
 export const ThesisInputV1Schema = z.object({
   id: z.string().min(1, 'Thesis input ID cannot be empty'),
-  rawText: z.string().trim().min(3, 'Thesis must be at least 3 characters long'),
+  rawText: z
+    .string()
+    .refine((value) => value.trim().length >= 3, 'Thesis must be at least 3 characters long'),
   traderId: z.string().optional(),
   submittedAt: z.string().datetime(),
   schemaVersion: z.literal(1).default(1),
@@ -54,7 +56,7 @@ export const StructuredThesisV1Schema = z.object({
   claim: z.string().min(1), // concise normalized thesis claim
   direction: ThesisDirectionV1Schema,
   timeHorizon: TimeHorizonV1Schema,
-  catalysts: z.array(z.string().min(1)).min(1, 'At least one catalyst required'),
+  catalysts: z.array(z.string().min(1)).default([]),
   createdAt: z.string().datetime(),
   schemaVersion: z.literal(1).default(1),
 });

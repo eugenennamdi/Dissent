@@ -40,7 +40,7 @@ Crucially, **the AI researches and challenges; the human makes the trading decis
    Extracts assets (ETH/BTC), direction (RELATIVE_LONG), time horizon (48h), catalysts, and initial assumptions.
        ↓
 3. Parallel Evidence Gathering
-   Market Desk fetches real-time Bitget orderbooks, tickers, funding rates, and open interest into an immutable Evidence Ledger.
+   Market Desk fetches Bitget tickers, aligned spot candles, funding rates, and open interest into an immutable Evidence Ledger.
        ↓
 4. Adversarial Argumentation
    - Advocate Desk: Builds the strongest grounded thesis in favor of the trade.
@@ -62,7 +62,7 @@ Crucially, **the AI researches and challenges; the human makes the trading decis
 
 - **Input**: Free-form text submission of market thesis.
 - **Market Data Port**: Real public Bitget V3 market data (spot/perpetual tickers, 24h stats, funding/open interest, and spot candles), normalized into a verifiable evidence ledger.
-- **Core Orchestration**: Multi-stage pipeline with verifiable state progression.
+- **Core Orchestration**: Phase 2 implements thesis structuring, market research, and adversarial argumentation; stress testing, synthesis, persistence, and full lifecycle progression remain later work.
 - **Signature Output**: 11-section Dissent Brief with complete evidence lineage.
 - **Human Call Interface**: Explicit human choice among `PROCEED`, `WATCH`, or `PASS` with optional rationale.
 

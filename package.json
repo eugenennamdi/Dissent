@@ -9,7 +9,8 @@
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "test:integration:bitget": "RUN_BITGET_LIVE=1 vitest run tests/integration/bitget.live.test.ts --reporter=verbose"
+    "test:integration:bitget": "RUN_BITGET_LIVE=1 vitest run tests/integration/bitget.live.test.ts --reporter=verbose",
+    "test:integration:ai": "RUN_AI_LIVE=1 vitest run tests/integration/ai-intelligence.live.test.ts --reporter=verbose"
   },
   "dependencies": {
     "next": "16.3.4",
