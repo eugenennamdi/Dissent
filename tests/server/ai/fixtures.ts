@@ -1,4 +1,5 @@
 import type { AssumptionV1 } from '@/core/contracts/assumption';
+import type { ArgumentStanceV1, ArgumentV1 } from '@/core/contracts/argument';
 import type { EvidenceLedgerV1, EvidenceV1 } from '@/core/contracts/evidence';
 import type { StructuredThesisV1, ThesisInputV1 } from '@/core/contracts/thesis';
 import type {
@@ -48,9 +49,13 @@ export const extractionOutput = {
 
 export class QueueModel implements StructuredModelPort {
   readonly requests: Array<StructuredModelRequest<z.ZodTypeAny>> = [];
-  private readonly outputs: unknown[];
+  private readonly outputs: Array<
+    unknown | ((request: StructuredModelRequest<z.ZodTypeAny>) => unknown)
+  >;
 
-  constructor(outputs: unknown[]) {
+  constructor(
+    outputs: Array<unknown | ((request: StructuredModelRequest<z.ZodTypeAny>) => unknown)>
+  ) {
     this.outputs = [...outputs];
   }
 
@@ -58,7 +63,8 @@ export class QueueModel implements StructuredModelPort {
     request: StructuredModelRequest<TSchema>
   ): Promise<StructuredModelResult<z.infer<TSchema>>> {
     this.requests.push(request);
-    const output = this.outputs.shift();
+    const queued = this.outputs.shift();
+    const output = typeof queued === 'function' ? queued(request) : queued;
     return {
       data: request.schema.parse(output),
       metadata: {
@@ -182,6 +188,36 @@ export function makeEvidenceLedger(thesisId = 'th_ai_1'): EvidenceLedgerV1 {
   };
 }
 
+export function makeArgument(
+  stance: ArgumentStanceV1,
+  thesisId = 'th_ai_1'
+): ArgumentV1 {
+  const pointId = stance === 'ADVOCATE' ? 'argp_advocate' : 'argp_dissent';
+  return {
+    id: stance === 'ADVOCATE' ? 'arg_advocate' : 'arg_dissent',
+    thesisId,
+    stance,
+    summary:
+      stance === 'ADVOCATE'
+        ? 'Evidence-bound support remains limited'
+        : 'Evidence does not establish forward persistence',
+    points: [
+      {
+        id: pointId,
+        title: stance === 'ADVOCATE' ? 'Relative evidence' : 'Persistence limitation',
+        reasoning:
+          'Evidence:\n[ev_return] ETH/USDT spot changed 5% over the aligned interval.\nInterpretation: This suggests relative evidence remains bounded',
+        evidenceIds: ['ev_return'],
+        targetAssumptionIds: ['asm_1'],
+        weight: 'PRIMARY',
+      },
+    ],
+    risksOrCounterweightsConsidered: [],
+    createdAt: FIXED_AT,
+    schemaVersion: 1,
+  };
+}
+
 export function argumentDraft(
   interpretation = 'This suggests relative momentum may favor the thesis'
 ) {
@@ -198,4 +234,140 @@ export function argumentDraft(
     ],
     counterweights: ['The evidence may not persist across the full thesis horizon'],
   } as const;
+}
+
+export function stressDraft(input: {
+  assumptionIds?: string[];
+  argumentPointIds?: string[];
+  evidenceIds?: string[];
+} = {}) {
+  const assumptionIds = input.assumptionIds ?? ['asm_0', 'asm_1'];
+  const argumentPointIds = input.argumentPointIds ?? ['argp_advocate', 'argp_dissent'];
+  const evidenceIds = input.evidenceIds ?? ['ev_return', 'ev_last'];
+  return {
+    assumptionAssessments: assumptionIds.map((assumptionId, index) =>
+      index === assumptionIds.length - 1
+        ? {
+            assumptionId,
+            status: 'SUPPORTED',
+            supportingEvidenceIds: [evidenceIds[0]],
+            opposingEvidenceIds: [],
+            contextEvidenceIds: [],
+            relevantArgumentPointIds: [argumentPointIds[0]],
+            finding: 'Current evidence suggests observed relative strength is consistent with the assumption',
+            unknowns: ['Forward persistence remains unknown'],
+          }
+        : {
+            assumptionId,
+            status: 'INSUFFICIENT_EVIDENCE',
+            supportingEvidenceIds: [],
+            opposingEvidenceIds: [],
+            contextEvidenceIds: [evidenceIds[1] ?? evidenceIds[0]],
+            relevantArgumentPointIds: [argumentPointIds[1] ?? argumentPointIds[0]],
+            finding: 'Available evidence does not establish the broader regime assumption',
+            unknowns: ['Broader risk appetite is not measured by the supplied ledger'],
+          }
+    ),
+    scenarios: [
+      {
+        name: 'Relative momentum reversal',
+        hypotheticalChange: 'ETH relative strength reverses while BTC recovers leadership',
+        affectedAssumptionIds: [assumptionIds[assumptionIds.length - 1]],
+        relevantEvidenceIds: [evidenceIds[0]],
+        relevantArgumentPointIds: [argumentPointIds[0]],
+        transmissionMechanism: 'A reversal would break the continuation premise behind the relative thesis',
+        scenarioType: 'ASSET_SPECIFIC_EVENT',
+        plausibility: 'MEDIUM',
+        consequenceForThesis: 'The expected relative outperformance may fail to persist',
+        uncertainties: ['The evidence cannot establish whether a reversal will occur'],
+      },
+      {
+        name: 'Risk regime deterioration',
+        hypotheticalChange: 'Broader risk appetite deteriorates during the stated horizon',
+        affectedAssumptionIds: [assumptionIds[0]],
+        relevantEvidenceIds: [evidenceIds[1] ?? evidenceIds[0]],
+        relevantArgumentPointIds: [argumentPointIds[1] ?? argumentPointIds[0]],
+        transmissionMechanism: 'A weaker regime may favor defensive relative positioning over ETH strength',
+        scenarioType: 'MACRO_REGIME_CHANGE',
+        plausibility: 'LOW',
+        consequenceForThesis: 'The thesis catalyst would no longer provide support',
+        uncertainties: ['The supplied ledger contains no direct macro observation'],
+      },
+    ],
+    invalidationConditions: [
+      {
+        targetAssumptionIds: [assumptionIds[assumptionIds.length - 1]],
+        relevantEvidenceIds: [evidenceIds[0]],
+        statement: 'ETH relative strength reverses across aligned market observations',
+        observableEvent: 'Bitget evidence shows ETH no longer outperforming BTC over aligned intervals',
+        verificationSourceKind: 'BITGET_MARKET_DATA',
+        expectedWindow: 'Within the stated thesis horizon',
+      },
+      {
+        targetAssumptionIds: [assumptionIds[0]],
+        relevantEvidenceIds: [evidenceIds[1] ?? evidenceIds[0]],
+        statement: 'Independent regime evidence no longer supports improving risk appetite',
+        observableEvent: 'A primary macro or sentiment source records broad risk deterioration',
+        verificationSourceKind: 'FUTURE_PRIMARY_SOURCE_REQUIRED',
+        expectedWindow: 'Within the stated thesis horizon',
+      },
+    ],
+  };
+}
+
+export function stressDraftFromRequest(request: StructuredModelRequest<z.ZodTypeAny>) {
+  const assumptions = request.userPayload.assumptions as Array<{ id: string }>;
+  const argumentsValue = request.userPayload.arguments as Array<{
+    points: Array<{ id: string }>;
+  }>;
+  const evidence = request.userPayload.evidenceCatalog as Array<{ id: string }>;
+  return stressDraft({
+    assumptionIds: assumptions.map((item) => item.id),
+    argumentPointIds: argumentsValue.flatMap((item) => item.points.map((point) => point.id)),
+    evidenceIds: evidence.map((item) => item.id),
+  });
+}
+
+export function synthesisDraft(input: {
+  dissentPointId?: string;
+  evidenceId?: string;
+  targetId?: string;
+} = {}) {
+  return {
+    dissentPointClassifications: [
+      {
+        dissentPointId: input.dissentPointId ?? 'argp_dissent',
+        classification: 'EVIDENCE_LIMITATION',
+        targetType: 'THESIS_CLAIM',
+        targetId: input.targetId ?? 'th_ai_1',
+        evidenceId: input.evidenceId ?? 'ev_return',
+        explanation: 'Historical relative performance does not establish forward persistence',
+        severity: null,
+      },
+    ],
+    unknowns: [
+      'Whether observed relative strength will persist through the stated horizon remains unknown',
+    ],
+  };
+}
+
+export function synthesisDraftFromRequest(request: StructuredModelRequest<z.ZodTypeAny>) {
+  const thesis = request.userPayload.thesis as { id: string };
+  const dissent = request.userPayload.dissentCase as {
+    points: Array<{ id: string; evidenceIds: string[] }>;
+  };
+  return {
+    dissentPointClassifications: dissent.points.map((point) => ({
+      dissentPointId: point.id,
+      classification: 'EVIDENCE_LIMITATION',
+      targetType: 'THESIS_CLAIM',
+      targetId: thesis.id,
+      evidenceId: point.evidenceIds[0],
+      explanation: 'Historical market evidence does not establish forward persistence',
+      severity: null,
+    })),
+    unknowns: [
+      'Whether observed relative strength will persist through the stated horizon remains unknown',
+    ],
+  };
 }

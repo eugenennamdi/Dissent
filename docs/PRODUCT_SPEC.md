@@ -62,7 +62,7 @@ Crucially, **the AI researches and challenges; the human makes the trading decis
 
 - **Input**: Free-form text submission of market thesis.
 - **Market Data Port**: Real public Bitget V3 market data (spot/perpetual tickers, 24h stats, funding/open interest, and spot candles), normalized into a verifiable evidence ledger.
-- **Core Orchestration**: Phase 2 implements thesis structuring, market research, and adversarial argumentation; stress testing, synthesis, persistence, and full lifecycle progression remain later work.
+- **Core Orchestration**: The server-side research engine implements thesis structuring, market research, adversarial argumentation, assumption stress testing, and deterministic Dissent Brief assembly. Persistence and application lifecycle APIs remain later work.
 - **Signature Output**: 11-section Dissent Brief with complete evidence lineage.
 - **Human Call Interface**: Explicit human choice among `PROCEED`, `WATCH`, or `PASS` with optional rationale.
 

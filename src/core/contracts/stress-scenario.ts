@@ -39,11 +39,19 @@ export const StressScenarioV1Schema = z.object({
   thesisId: z.string().min(1),
   name: z.string().min(1, 'Scenario name is required'),
   description: z.string().min(1, 'Scenario description is required'),
-  affectedAssumptionIds: z.array(z.string()).default([]),
+  affectedAssumptionIds: z
+    .array(z.string().min(1))
+    .min(1, 'At least one thesis assumption must be affected'),
+  relevantEvidenceIds: z
+    .array(z.string().min(1))
+    .min(1, 'At least one current evidence item must be identified as relevant context'),
   transmissionMechanism: z.string().min(1, 'Transmission mechanism is required'),
   scenarioType: ScenarioTypeV1Schema,
   plausibility: PlausibilityBandV1Schema,
   consequenceForThesis: z.string().min(1, 'Consequence for thesis is required'),
+  uncertainties: z
+    .array(z.string().min(1))
+    .min(1, 'Scenario uncertainty must remain explicit'),
   suggestedMitigationOrHedge: z.string().optional(),
   schemaVersion: z.literal(1).default(1),
 });
@@ -65,12 +73,16 @@ export const QuantitativeInvalidationConditionV1Schema = z.object({
   type: z.literal('QUANTITATIVE'),
   id: z.string().min(1),
   thesisId: z.string().min(1),
+  targetAssumptionIds: z
+    .array(z.string().min(1))
+    .min(1, 'Invalidation must target at least one thesis assumption'),
+  relevantEvidenceIds: z.array(z.string().min(1)).default([]),
   statement: z.string().min(1, 'Invalidation statement is required'),
   targetMetric: z.string().min(1, 'Target metric is required'),
   triggerThreshold: z.string().min(1, 'Trigger threshold is required'),
   timeframe: z.string().min(1, 'Timeframe is required'),
   observableDataSource: z.string().min(1, 'Observable data source is required'),
-  urgency: InvalidationUrgencyV1Schema.default('IMMEDIATE_EXIT'),
+  urgency: InvalidationUrgencyV1Schema.default('THESIS_REVIEW'),
   schemaVersion: z.literal(1).default(1),
 });
 export type QuantitativeInvalidationConditionV1 = z.infer<typeof QuantitativeInvalidationConditionV1Schema>;
@@ -83,11 +95,15 @@ export const QualitativeInvalidationConditionV1Schema = z.object({
   type: z.literal('QUALITATIVE'),
   id: z.string().min(1),
   thesisId: z.string().min(1),
+  targetAssumptionIds: z
+    .array(z.string().min(1))
+    .min(1, 'Invalidation must target at least one thesis assumption'),
+  relevantEvidenceIds: z.array(z.string().min(1)).default([]),
   statement: z.string().min(1, 'Invalidation statement is required'),
   observableEvent: z.string().min(1, 'Observable event description is required'),
   verificationSource: z.string().min(1, 'Verification source is required'),
   expectedWindow: z.string().optional(),
-  urgency: InvalidationUrgencyV1Schema.default('IMMEDIATE_EXIT'),
+  urgency: InvalidationUrgencyV1Schema.default('THESIS_REVIEW'),
   schemaVersion: z.literal(1).default(1),
 });
 export type QualitativeInvalidationConditionV1 = z.infer<typeof QualitativeInvalidationConditionV1Schema>;

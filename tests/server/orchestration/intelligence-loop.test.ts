@@ -8,6 +8,8 @@ import {
   argumentDraft,
   extractionOutput,
   makeEvidenceLedger,
+  stressDraftFromRequest,
+  synthesisDraftFromRequest,
   thesisInput,
 } from '../ai/fixtures';
 
@@ -29,7 +31,13 @@ describe('IntelligenceLoop', () => {
       summaryInterpretation:
         'Available market evidence does not establish persistence across the thesis horizon',
     };
-    const model = new QueueModel([extractionOutput, advocateDraft, dissentDraft]);
+    const model = new QueueModel([
+      extractionOutput,
+      advocateDraft,
+      dissentDraft,
+      stressDraftFromRequest,
+      synthesisDraftFromRequest,
+    ]);
     const ai = new DeepSeekAnalystAdapter({ model, now: () => new Date(FIXED_AT) });
     const marketDesk: MarketDeskPort = {
       async gatherMarketObservations(thesis) {
@@ -45,17 +53,27 @@ describe('IntelligenceLoop', () => {
     expect(result.advocateCase.stance).toBe('ADVOCATE');
     expect(result.dissentCase.stance).toBe('DISSENTER');
     expect(result.advocateCase.summary).not.toBe(result.dissentCase.summary);
-    expect(result.modelCalls).toHaveLength(3);
+    expect(result.modelCalls).toHaveLength(5);
     expect(model.requests.map((request) => request.maxOutputTokens)).toEqual([
       1_800,
       6_000,
       6_000,
+      7_200,
+      4_200,
     ]);
     expect(model.requests.map((request) => request.reasoningEffort)).toEqual([
       'low',
       'none',
       'none',
+      'none',
+      'none',
     ]);
+    expect(result.assumptions.every((item) => item.status !== 'UNTESTED')).toBe(true);
+    expect(result.stressScenarios).toHaveLength(2);
+    expect(result.invalidationConditions).toHaveLength(2);
+    expect(result.brief.originalThesis).toBe(thesisInput.rawText);
+    expect(result.brief.humanDecision).toBeNull();
+    expect(result.brief.contradictions).toEqual([]);
     expect(result.timingsMs.total).toBeGreaterThanOrEqual(0);
     expect(result).not.toHaveProperty('humanDecision');
     expect(result.advocateCase).not.toHaveProperty('humanDecision');

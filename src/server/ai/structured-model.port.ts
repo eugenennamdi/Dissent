@@ -12,6 +12,7 @@ export interface StructuredModelRequest<TSchema extends z.ZodTypeAny> {
 }
 
 export interface ModelCallMetadata {
+  operation?: string;
   provider: 'DeepSeek';
   model: string;
   latencyMs: number;

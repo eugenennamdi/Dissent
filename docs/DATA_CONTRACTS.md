@@ -149,10 +149,14 @@ Structured argument case for or against the thesis.
 - **`StressScenarioV1`**: Domain-general scenario analysis:
   - `scenarioType`: `MACRO_REGIME_CHANGE` | `LIQUIDITY_SHOCK` | `POSITIONING_REVERSAL` | `LIQUIDATION_CASCADE` | `VOLATILITY_EXPANSION` | `CORRELATION_BREAKDOWN` | `ASSET_SPECIFIC_EVENT` | `MARKET_STRUCTURE_DETERIORATION` | `OTHER`.
   - `plausibility`: `HIGH` | `MEDIUM` | `LOW` | `TAIL_RISK`.
+  - `affectedAssumptionIds`: Non-empty references to the assumptions under pressure.
+  - `relevantEvidenceIds`: Non-empty references to current evidence used only as scenario context.
   - `transmissionMechanism`: Concrete transmission path to price/positioning.
   - `consequenceForThesis`: How the scenario breaks the hypothesis.
+  - `uncertainties`: Explicit unresolved aspects of the hypothetical scenario.
 
 - **`InvalidationConditionV1`**: Discriminated union by `type`:
+  - Both variants require `targetAssumptionIds` and validate any `relevantEvidenceIds`; the latter may be empty when the condition explicitly requires a future primary source. Generated conditions default to `THESIS_REVIEW`, not an execution instruction.
   - **`QUANTITATIVE`**: Observable numeric metric and threshold (e.g. "ETH/BTC closes below 0.0315 on 4H candle").
     - Requires: `targetMetric`, `triggerThreshold`, `timeframe`, `observableDataSource`.
   - **`QUALITATIVE`**: Observable real-world or market event (e.g. "Scheduled hard fork cancelled by core devs").
@@ -197,6 +201,9 @@ The signature 11-section research artifact:
 11. `humanDecision`: Starts as `null`; only populated after human operator review.
 - **Invariants**:
   - `theDissent` stance must be `'DISSENTER'`.
+  - Supporting evidence must be an unchanged ledger item; assumptions, scenarios, invalidations, and contradictions must reference artifacts from the same thesis.
+  - A contradiction requires ledger evidence explicitly marked `CONTRADICTING`; alternative explanations, hypothetical risks, and evidence gaps are not promoted to contradictions.
+  - AI-generated briefs contain no `UNTESTED` assumptions and keep `humanDecision: null`.
   - Fixed legal disclaimer string embedded.
 
 ---

@@ -216,3 +216,329 @@ export function createArgumentDraftJsonSchema(
     },
   };
 }
+
+const StressFindingPrefix =
+  /^(Current evidence suggests|Current evidence may|Available evidence does not establish|A limitation is)\b/;
+
+export const StressTestDraftOutputSchema = z
+  .object({
+    assumptionAssessments: z
+      .array(
+        z
+          .object({
+            assumptionId: z.string().min(1),
+            status: z.enum([
+              'SUPPORTED',
+              'QUESTIONED',
+              'CONTRADICTED',
+              'INSUFFICIENT_EVIDENCE',
+            ]),
+            supportingEvidenceIds: z.array(z.string().min(1)).max(4),
+            opposingEvidenceIds: z.array(z.string().min(1)).max(4),
+            contextEvidenceIds: z.array(z.string().min(1)).max(4),
+            relevantArgumentPointIds: z.array(z.string().min(1)).min(1).max(4),
+            finding: z.string().min(1).max(500).regex(StressFindingPrefix),
+            unknowns: z.array(z.string().min(1).max(300)).min(1).max(3),
+          })
+          .strict()
+      )
+      .min(1)
+      .max(6),
+    scenarios: z
+      .array(
+        z
+          .object({
+            name: z.string().min(1).max(120),
+            hypotheticalChange: z.string().min(1).max(400),
+            affectedAssumptionIds: z.array(z.string().min(1)).min(1).max(4),
+            relevantEvidenceIds: z.array(z.string().min(1)).min(1).max(4),
+            relevantArgumentPointIds: z.array(z.string().min(1)).min(1).max(4),
+            transmissionMechanism: z.string().min(1).max(400),
+            scenarioType: z.enum([
+              'MACRO_REGIME_CHANGE',
+              'LIQUIDITY_SHOCK',
+              'POSITIONING_REVERSAL',
+              'LIQUIDATION_CASCADE',
+              'VOLATILITY_EXPANSION',
+              'CORRELATION_BREAKDOWN',
+              'ASSET_SPECIFIC_EVENT',
+              'MARKET_STRUCTURE_DETERIORATION',
+              'OTHER',
+            ]),
+            plausibility: z.enum(['HIGH', 'MEDIUM', 'LOW', 'TAIL_RISK']),
+            consequenceForThesis: z.string().min(1).max(400),
+            uncertainties: z.array(z.string().min(1).max(300)).min(1).max(3),
+          })
+          .strict()
+      )
+      .min(2)
+      .max(3),
+    invalidationConditions: z
+      .array(
+        z
+          .object({
+            targetAssumptionIds: z.array(z.string().min(1)).min(1).max(4),
+            relevantEvidenceIds: z.array(z.string().min(1)).max(4),
+            statement: z.string().min(1).max(300),
+            observableEvent: z.string().min(1).max(300),
+            verificationSourceKind: z.enum([
+              'BITGET_MARKET_DATA',
+              'FUTURE_PRIMARY_SOURCE_REQUIRED',
+            ]),
+            expectedWindow: z.string().min(1).max(160),
+          })
+          .strict()
+      )
+      .min(1)
+      .max(4),
+  })
+  .strict();
+
+export function createStressTestDraftJsonSchema(input: {
+  evidenceIds: string[];
+  assumptionIds: string[];
+  argumentPointIds: string[];
+}): Record<string, unknown> {
+  const nonNumericString = (maxLength: number) => ({
+    type: 'string',
+    minLength: 1,
+    maxLength,
+    pattern: NonNumericTextPattern,
+  });
+  const idArray = (ids: string[], minItems = 0, maxItems = 4) => ({
+    type: 'array',
+    minItems,
+    maxItems,
+    uniqueItems: true,
+    items: { type: 'string', enum: ids },
+  });
+
+  return {
+    type: 'object',
+    additionalProperties: false,
+    required: ['assumptionAssessments', 'scenarios', 'invalidationConditions'],
+    properties: {
+      assumptionAssessments: {
+        type: 'array',
+        minItems: input.assumptionIds.length,
+        maxItems: input.assumptionIds.length,
+        items: {
+          type: 'object',
+          additionalProperties: false,
+          required: [
+            'assumptionId',
+            'status',
+            'supportingEvidenceIds',
+            'opposingEvidenceIds',
+            'contextEvidenceIds',
+            'relevantArgumentPointIds',
+            'finding',
+            'unknowns',
+          ],
+          properties: {
+            assumptionId: { type: 'string', enum: input.assumptionIds },
+            status: {
+              type: 'string',
+              enum: [
+                'SUPPORTED',
+                'QUESTIONED',
+                'CONTRADICTED',
+                'INSUFFICIENT_EVIDENCE',
+              ],
+            },
+            supportingEvidenceIds: idArray(input.evidenceIds),
+            opposingEvidenceIds: idArray(input.evidenceIds),
+            contextEvidenceIds: idArray(input.evidenceIds),
+            relevantArgumentPointIds: idArray(input.argumentPointIds, 1),
+            finding: {
+              ...nonNumericString(500),
+              pattern:
+                '^(Current evidence suggests|Current evidence may|Available evidence does not establish|A limitation is)\\b[^0-9%$€£¥]*$',
+            },
+            unknowns: {
+              type: 'array',
+              minItems: 1,
+              maxItems: 3,
+              items: nonNumericString(300),
+            },
+          },
+        },
+      },
+      scenarios: {
+        type: 'array',
+        minItems: 2,
+        maxItems: 3,
+        items: {
+          type: 'object',
+          additionalProperties: false,
+          required: [
+            'name',
+            'hypotheticalChange',
+            'affectedAssumptionIds',
+            'relevantEvidenceIds',
+            'relevantArgumentPointIds',
+            'transmissionMechanism',
+            'scenarioType',
+            'plausibility',
+            'consequenceForThesis',
+            'uncertainties',
+          ],
+          properties: {
+            name: nonNumericString(120),
+            hypotheticalChange: nonNumericString(400),
+            affectedAssumptionIds: idArray(input.assumptionIds, 1),
+            relevantEvidenceIds: idArray(input.evidenceIds, 1),
+            relevantArgumentPointIds: idArray(input.argumentPointIds, 1),
+            transmissionMechanism: nonNumericString(400),
+            scenarioType: {
+              type: 'string',
+              enum: [
+                'MACRO_REGIME_CHANGE',
+                'LIQUIDITY_SHOCK',
+                'POSITIONING_REVERSAL',
+                'LIQUIDATION_CASCADE',
+                'VOLATILITY_EXPANSION',
+                'CORRELATION_BREAKDOWN',
+                'ASSET_SPECIFIC_EVENT',
+                'MARKET_STRUCTURE_DETERIORATION',
+                'OTHER',
+              ],
+            },
+            plausibility: { type: 'string', enum: ['HIGH', 'MEDIUM', 'LOW', 'TAIL_RISK'] },
+            consequenceForThesis: nonNumericString(400),
+            uncertainties: {
+              type: 'array',
+              minItems: 1,
+              maxItems: 3,
+              items: nonNumericString(300),
+            },
+          },
+        },
+      },
+      invalidationConditions: {
+        type: 'array',
+        minItems: 1,
+        maxItems: 4,
+        items: {
+          type: 'object',
+          additionalProperties: false,
+          required: [
+            'targetAssumptionIds',
+            'relevantEvidenceIds',
+            'statement',
+            'observableEvent',
+            'verificationSourceKind',
+            'expectedWindow',
+          ],
+          properties: {
+            targetAssumptionIds: idArray(input.assumptionIds, 1),
+            relevantEvidenceIds: idArray(input.evidenceIds),
+            statement: nonNumericString(300),
+            observableEvent: nonNumericString(300),
+            verificationSourceKind: {
+              type: 'string',
+              enum: ['BITGET_MARKET_DATA', 'FUTURE_PRIMARY_SOURCE_REQUIRED'],
+            },
+            expectedWindow: nonNumericString(160),
+          },
+        },
+      },
+    },
+  };
+}
+
+export const SynthesisDraftOutputSchema = z
+  .object({
+    dissentPointClassifications: z
+      .array(
+        z
+          .object({
+            dissentPointId: z.string().min(1),
+            classification: z.enum([
+              'DIRECT_CONTRADICTION',
+              'ALTERNATIVE_EXPLANATION',
+              'EVIDENCE_LIMITATION',
+              'HYPOTHETICAL_RISK',
+            ]),
+            targetType: z.enum(['THESIS_CLAIM', 'ASSUMPTION']),
+            targetId: z.string().min(1),
+            evidenceId: z.string().min(1),
+            explanation: z.string().min(1).max(400),
+            severity: z.enum(['CRITICAL', 'SIGNIFICANT', 'MINOR']).nullable(),
+          })
+          .strict()
+      )
+      .min(1)
+      .max(5),
+    unknowns: z.array(z.string().min(1).max(300)).min(1).max(8),
+  })
+  .strict();
+
+export function createSynthesisDraftJsonSchema(input: {
+  dissentPointIds: string[];
+  evidenceIds: string[];
+  targetIds: string[];
+  allowDirectContradictions: boolean;
+}): Record<string, unknown> {
+  const classifications = [
+    ...(input.allowDirectContradictions ? ['DIRECT_CONTRADICTION'] : []),
+    'ALTERNATIVE_EXPLANATION',
+    'EVIDENCE_LIMITATION',
+    'HYPOTHETICAL_RISK',
+  ];
+  return {
+    type: 'object',
+    additionalProperties: false,
+    required: ['dissentPointClassifications', 'unknowns'],
+    properties: {
+      dissentPointClassifications: {
+        type: 'array',
+        minItems: input.dissentPointIds.length,
+        maxItems: input.dissentPointIds.length,
+        items: {
+          type: 'object',
+          additionalProperties: false,
+          required: [
+            'dissentPointId',
+            'classification',
+            'targetType',
+            'targetId',
+            'evidenceId',
+            'explanation',
+            'severity',
+          ],
+          properties: {
+            dissentPointId: { type: 'string', enum: input.dissentPointIds },
+            classification: { type: 'string', enum: classifications },
+            targetType: { type: 'string', enum: ['THESIS_CLAIM', 'ASSUMPTION'] },
+            targetId: { type: 'string', enum: input.targetIds },
+            evidenceId: { type: 'string', enum: input.evidenceIds },
+            explanation: {
+              type: 'string',
+              minLength: 1,
+              maxLength: 400,
+              pattern: NonNumericTextPattern,
+            },
+            severity: input.allowDirectContradictions
+              ? {
+                  type: ['string', 'null'],
+                  enum: ['CRITICAL', 'SIGNIFICANT', 'MINOR', null],
+                }
+              : { type: 'null', enum: [null] },
+          },
+        },
+      },
+      unknowns: {
+        type: 'array',
+        minItems: 1,
+        maxItems: 8,
+        items: {
+          type: 'string',
+          minLength: 1,
+          maxLength: 300,
+          pattern: NonNumericTextPattern,
+        },
+      },
+    },
+  };
+}

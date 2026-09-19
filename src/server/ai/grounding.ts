@@ -24,9 +24,14 @@ const SEMANTIC_EVIDENCE_RULES: ReadonlyArray<{
     allowedTypes: new Set(['FUNDING_RATE']),
   },
   {
-    label: 'positioning',
-    pattern: /\b(?:open interest|positioning)\b/i,
+    label: 'open-interest',
+    pattern: /\bopen interest\b/i,
     allowedTypes: new Set(['OPEN_INTEREST']),
+  },
+  {
+    label: 'positioning',
+    pattern: /\bpositioning\b/i,
+    allowedTypes: new Set(['FUNDING_RATE', 'OPEN_INTEREST']),
   },
   {
     label: 'relative-performance',

@@ -1,14 +1,20 @@
 import type { ArgumentV1 } from '@/core/contracts/argument';
 import type { AssumptionV1 } from '@/core/contracts/assumption';
+import type { DissentBriefV1 } from '@/core/contracts/brief';
 import type { EvidenceLedgerV1 } from '@/core/contracts/evidence';
+import type {
+  InvalidationConditionV1,
+  StressScenarioV1,
+} from '@/core/contracts/stress-scenario';
 import { ThesisInputV1Schema, type StructuredThesisV1, type ThesisInputV1 } from '@/core/contracts/thesis';
 import {
   assertArgumentEvidenceGrounding,
   assertEvidenceLedgerIntegrity,
+  assertGeneratedBriefInvariants,
   assertThesisPreservation,
 } from '@/core/domain/invariants';
 import { DissentError } from '@/core/errors/domain-errors';
-import type { ArgumentationPort, ThesisStructuringPort } from '@/server/ai/ai-analyst.port';
+import type { AiDeskPort } from '@/server/ai/ai-analyst.port';
 import type { ModelCallMetadata } from '@/server/ai/structured-model.port';
 import type { MarketDeskPort, MarketObservationQuery } from '@/server/market/market-desk.port';
 
@@ -19,19 +25,23 @@ export interface IntelligenceLoopResult {
   evidenceLedger: EvidenceLedgerV1;
   advocateCase: ArgumentV1;
   dissentCase: ArgumentV1;
+  stressScenarios: StressScenarioV1[];
+  invalidationConditions: InvalidationConditionV1[];
+  brief: DissentBriefV1;
   modelCalls: readonly ModelCallMetadata[];
   timingsMs: {
     structuring: number;
     marketResearch: number;
     argumentation: number;
+    stressTesting: number;
+    synthesis: number;
     total: number;
   };
 }
 
-type IntelligenceAiPort = ThesisStructuringPort &
-  ArgumentationPort & {
-    getModelCallRecords?: () => readonly ModelCallMetadata[];
-  };
+type IntelligenceAiPort = AiDeskPort & {
+  getModelCallRecords?: () => readonly ModelCallMetadata[];
+};
 
 export interface IntelligenceLoopOptions {
   ai: IntelligenceAiPort;
@@ -40,7 +50,7 @@ export interface IntelligenceLoopOptions {
   marketQuery?: MarketObservationQuery;
 }
 
-/** Phase 2 only: structuring, market research, and evidence-bound debate. */
+/** Complete server-side research loop through a validated Dissent Brief. */
 export class IntelligenceLoop {
   private readonly ai: IntelligenceAiPort;
   private readonly marketDesk: MarketDeskPort;
@@ -120,18 +130,111 @@ export class IntelligenceLoop {
     assertArgumentEvidenceGrounding(advocateCase, research.ledger);
     assertArgumentEvidenceGrounding(dissentCase, research.ledger);
 
+    const artifactsSnapshot = JSON.stringify({
+      ledger: research.ledger,
+      advocateCase,
+      dissentCase,
+      initialAssumptions,
+    });
+    const stressStartedAt = this.now();
+    const { stressScenarios, invalidationConditions, testedAssumptions } =
+      await this.ai.stressTest(
+        structuredThesis,
+        initialAssumptions,
+        research.ledger,
+        advocateCase,
+        dissentCase
+      );
+    const stressTesting = this.now() - stressStartedAt;
+    if (
+      JSON.stringify({
+        ledger: research.ledger,
+        advocateCase,
+        dissentCase,
+        initialAssumptions,
+      }) !== artifactsSnapshot
+    ) {
+      throw DissentError.analysisFailed(
+        'STRESS_TESTING',
+        'AI stress testing attempted to mutate preceding research artifacts.'
+      );
+    }
+    if (
+      testedAssumptions.length !== initialAssumptions.length ||
+      testedAssumptions.some(
+        (assumption) =>
+          assumption.thesisId !== structuredThesis.id || assumption.status === 'UNTESTED'
+      ) ||
+      stressScenarios.length === 0 ||
+      invalidationConditions.length === 0
+    ) {
+      throw DissentError.modelOutputInvalid(
+        'stressTest',
+        'Stress testing did not return complete tested assumptions, scenarios, and invalidation conditions.'
+      );
+    }
+
+    const synthesisSnapshot = JSON.stringify({
+      ledger: research.ledger,
+      advocateCase,
+      dissentCase,
+      testedAssumptions,
+      stressScenarios,
+      invalidationConditions,
+    });
+    const synthesisStartedAt = this.now();
+    const brief = await this.ai.synthesizeBrief({
+      runId: `run_${input.id}`,
+      originalThesis: input,
+      structuredThesis,
+      advocateCase,
+      dissentCase,
+      assumptions: testedAssumptions,
+      stressScenarios,
+      invalidationConditions,
+      evidenceLedger: research.ledger,
+    });
+    const synthesis = this.now() - synthesisStartedAt;
+    if (
+      JSON.stringify({
+        ledger: research.ledger,
+        advocateCase,
+        dissentCase,
+        testedAssumptions,
+        stressScenarios,
+        invalidationConditions,
+      }) !== synthesisSnapshot
+    ) {
+      throw DissentError.analysisFailed(
+        'SYNTHESIZING',
+        'AI synthesis attempted to mutate validated research artifacts.'
+      );
+    }
+    assertGeneratedBriefInvariants(brief);
+    if (brief.originalThesis !== input.rawText) {
+      throw DissentError.analysisFailed(
+        'SYNTHESIZING',
+        'Final brief did not preserve the original thesis verbatim.'
+      );
+    }
+
     return {
       input,
       structuredThesis,
-      assumptions: initialAssumptions,
+      assumptions: testedAssumptions,
       evidenceLedger: research.ledger,
       advocateCase,
       dissentCase,
+      stressScenarios,
+      invalidationConditions,
+      brief,
       modelCalls: this.ai.getModelCallRecords?.() ?? [],
       timingsMs: {
         structuring,
         marketResearch,
         argumentation,
+        stressTesting,
+        synthesis,
         total: this.now() - totalStartedAt,
       },
     };

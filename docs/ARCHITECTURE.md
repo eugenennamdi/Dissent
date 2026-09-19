@@ -51,20 +51,20 @@ Dissent enforces strict separation between domain logic and external infrastruct
   - `structureThesis(ThesisInputV1): Promise<{ structuredThesis, initialAssumptions }>`
   - `buildAdvocateCase(StructuredThesisV1, EvidenceLedgerV1, AssumptionV1[]): Promise<ArgumentV1>`
   - `buildDissentCase(StructuredThesisV1, EvidenceLedgerV1, AssumptionV1[]): Promise<ArgumentV1>`
-  - `stressTest(StructuredThesisV1, AssumptionV1[], EvidenceLedgerV1): Promise<{ stressScenarios, invalidationConditions, testedAssumptions }>`
+  - `stressTest(StructuredThesisV1, AssumptionV1[], EvidenceLedgerV1, Advocate ArgumentV1, Dissenter ArgumentV1): Promise<{ stressScenarios, invalidationConditions, testedAssumptions }>`
   - `synthesizeBrief(params): Promise<DissentBriefV1>`
 - Strictly avoids generic `generate(prompt: string): Promise<string>` interfaces. Every operation takes domain contracts and returns domain contracts.
 - `deepseek-responses.client.ts`: fixed-host, server-only Responses API client using JSON Schema output, bounded input/output, low reasoning effort, native `fetch`, and typed provider failures. Trusted prompts use DeepSeek's top-level `instructions` field because `developer` messages are user-priority. It exposes no tools.
-- `deepseek-analyst.adapter.ts`: implements the Phase 2 structuring and argumentation ports. IDs, timestamps, stances, exact evidence quotations, and numeric facts are server-owned rather than model-authored.
-- `grounding.ts`: rejects invented references, decision language, model-authored numeric facts, and selected evidence whose observation type cannot support the interpretation.
+- `deepseek-analyst.adapter.ts`: implements all five bounded semantic operations. IDs, timestamps, stances, exact evidence quotations, hypothesis labels, invalidation source wording, and final brief assembly are server-owned rather than model-authored.
+- `grounding.ts` and `research-grounding.ts`: reject invented references, decision language, model-authored numeric facts, inconsistent assumption statuses, non-distinct scenarios, and neutral evidence mischaracterized as direct contradiction.
 
 The default provider/model is DeepSeek `deepseek-flash` (currently DeepSeek-V4.1-Flash) with low reasoning effort. It provides native Responses JSON Schema output with lower listed pricing and higher concurrency than `deepseek-v4-pro`, making it the bounded default for extraction and evidence selection. `DEEPSEEK_API_KEY` is required; `DEEPSEEK_MODEL` is an optional deployment override.
 
-Output budgets and reasoning are operation-specific because DeepSeek counts reasoning and visible JSON together. Thesis structuring uses 1,800 tokens with low reasoning. Each evidence-rich argument uses a 6,000-token allowance with reasoning disabled; a live failure showed low reasoning consuming 4,541 of 6,000 output tokens before the Advocate JSON could finish. A `max_output_tokens` incomplete response is surfaced as typed `OUTPUT_TRUNCATED` with safe model, budget, reasoning, and token-usage metadata; truncated JSON is never parsed or accepted.
+Output budgets and reasoning are operation-specific because DeepSeek counts reasoning and visible JSON together. Thesis structuring uses 1,800 tokens with low reasoning. Each evidence-rich argument uses 6,000 tokens, stress testing uses 7,200, and synthesis uses 4,200; the latter four calls disable reasoning. A `max_output_tokens` incomplete response is surfaced as typed `OUTPUT_TRUNCATED` with safe model, budget, reasoning, and token-usage metadata; truncated JSON is never parsed or accepted.
 
 ### Orchestration Boundary (`src/server/orchestration/`)
 - `orchestrator.port.ts`: Controls the lifecycle and transitions between analysis stages.
-- `intelligence-loop.ts`: implemented Phase 2 slice: structure → real market research → parallel grounded Advocate/Dissenter. It fails closed when market research is partial. Stress testing, synthesis, and persistence remain later phases.
+- `intelligence-loop.ts`: complete research flow: structure → real market research → parallel grounded Advocate/Dissenter → assumption stress test → Dissent Brief synthesis. It snapshots preceding artifacts around AI stages, fails closed on partial research, and validates the generated brief. Persistence remains a later phase.
 
 ---
 
@@ -94,8 +94,9 @@ Output budgets and reasoning are operation-specific because DeepSeek counts reas
        │
        ▼ (Stage: STRESS_TESTING)
 [AI Analyst: stressTest()]
-       ├── Evaluates assumptions against stress regimes
-       └── Formulates observable InvalidationConditionV1[]
+       ├── Evaluates each assumption against evidence and both arguments
+       ├── Produces explicitly hypothetical, assumption-linked scenarios
+       └── Formulates observable thesis-review InvalidationConditionV1[]
        │
        ▼ (Stage: SYNTHESIZING)
 [AI Analyst: synthesizeBrief()]
@@ -114,8 +115,9 @@ Output budgets and reasoning are operation-specific because DeepSeek counts reas
 
 1. **Deterministic Evidence Lineage**: Each `EvidenceV1` item carries an immutable `provenance` block recording the exact endpoint, source observation timestamp, local retrieval timestamp, content hash, and the selected upstream fields needed for audit.
 2. **Referential and Thesis Integrity**: An argument point cannot claim an external observation unless its `evidenceIds` point to the same thesis's `EvidenceLedgerV1`.
-3. **Deterministic Facts**: Models select evidence IDs and write qualitative interpretations. The server inserts the ledger's exact claims into `ArgumentV1.reasoning`; model-authored digits, percentages, prices, or decision language are rejected.
-4. **Prompt-Injection Boundary**: Trader text and evidence are JSON-encoded untrusted data under a higher-priority fixed system instruction. The model has no browser, shell, wallet, exchange, or tool surface.
+3. **Deterministic Facts**: Models select evidence IDs and write qualitative interpretations. The server inserts the ledger's exact claims into `ArgumentV1.reasoning`; model-authored digits, percentages, prices, or decision language are rejected. Scenario hypotheses and potential consequences receive server-owned labels.
+4. **Brief Assembly**: The Synthesizer classifies existing dissent and names gaps. The server copies validated artifacts into the brief, derives supporting evidence from Advocate references, creates contradictions only from explicitly `CONTRADICTING` ledger items, and fixes `humanDecision` to `null`.
+5. **Prompt-Injection Boundary**: Trader text and evidence are JSON-encoded untrusted data under a higher-priority fixed system instruction. The model has no browser, shell, wallet, exchange, or tool surface.
 
 ## 5. Phase 1 Bitget Integration
 

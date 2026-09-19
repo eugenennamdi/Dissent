@@ -155,6 +155,16 @@ export function assertArgumentEvidenceGrounding(
  * Invariant 1, 7 & 10: Full DissentBrief structural verification.
  */
 export function assertBriefInvariants(brief: DissentBriefV1): void {
+  assertEvidenceLedgerIntegrity(brief.evidenceLedger);
+  if (
+    brief.originalThesis !== brief.structuredThesis.originalThesis ||
+    brief.evidenceLedger.thesisId !== brief.structuredThesis.id
+  ) {
+    throw DissentError.invalidInput(
+      'Domain Invariant Violation: Brief thesis text, structured thesis, and evidence ledger must describe the same thesis.'
+    );
+  }
+
   // Ensure the Dissent has DISSENTER stance
   if (brief.theDissent.stance !== 'DISSENTER') {
     throw DissentError.invalidInput(
@@ -165,9 +175,141 @@ export function assertBriefInvariants(brief: DissentBriefV1): void {
   // Ensure all argument evidence references exist in the ledger
   assertArgumentEvidenceGrounding(brief.theDissent, brief.evidenceLedger);
 
+  const evidenceById = new Map(brief.evidenceLedger.items.map((item) => [item.id, item]));
+  const assumptionIds = new Set(brief.assumptions.map((item) => item.id));
+  if (assumptionIds.size !== brief.assumptions.length) {
+    throw DissentError.invalidInput(
+      'Domain Invariant Violation: Brief assumptions must have unique IDs.'
+    );
+  }
+  for (const evidence of brief.supportingEvidence) {
+    const ledgerEvidence = evidenceById.get(evidence.id);
+    if (!ledgerEvidence || JSON.stringify(ledgerEvidence) !== JSON.stringify(evidence)) {
+      throw DissentError.invalidInput(
+        `Domain Invariant Violation: Supporting evidence ${evidence.id} must be an unchanged item from the evidence ledger.`
+      );
+    }
+  }
+  for (const assumption of brief.assumptions) {
+    if (assumption.thesisId !== brief.structuredThesis.id) {
+      throw DissentError.invalidInput(
+        `Domain Invariant Violation: Assumption ${assumption.id} belongs to a different thesis.`
+      );
+    }
+    for (const evidenceId of [
+      ...assumption.supportingEvidenceIds,
+      ...assumption.opposingEvidenceIds,
+    ]) {
+      if (!evidenceById.has(evidenceId)) {
+        throw DissentError.invalidInput(
+          `Domain Invariant Violation: Assumption ${assumption.id} references missing evidence ${evidenceId}.`
+        );
+      }
+    }
+  }
+  for (const scenario of brief.stressScenarios) {
+    if (scenario.thesisId !== brief.structuredThesis.id) {
+      throw DissentError.invalidInput(
+        `Domain Invariant Violation: Scenario ${scenario.id} belongs to a different thesis.`
+      );
+    }
+    for (const assumptionId of scenario.affectedAssumptionIds) {
+      if (!assumptionIds.has(assumptionId)) {
+        throw DissentError.invalidInput(
+          `Domain Invariant Violation: Scenario ${scenario.id} references missing assumption ${assumptionId}.`
+        );
+      }
+    }
+    for (const evidenceId of scenario.relevantEvidenceIds) {
+      if (!evidenceById.has(evidenceId)) {
+        throw DissentError.invalidInput(
+          `Domain Invariant Violation: Scenario ${scenario.id} references missing evidence ${evidenceId}.`
+        );
+      }
+    }
+  }
+  for (const condition of brief.invalidationConditions) {
+    if (condition.thesisId !== brief.structuredThesis.id) {
+      throw DissentError.invalidInput(
+        `Domain Invariant Violation: Invalidation ${condition.id} belongs to a different thesis.`
+      );
+    }
+    for (const assumptionId of condition.targetAssumptionIds) {
+      if (!assumptionIds.has(assumptionId)) {
+        throw DissentError.invalidInput(
+          `Domain Invariant Violation: Invalidation ${condition.id} references missing assumption ${assumptionId}.`
+        );
+      }
+    }
+    for (const evidenceId of condition.relevantEvidenceIds) {
+      if (!evidenceById.has(evidenceId)) {
+        throw DissentError.invalidInput(
+          `Domain Invariant Violation: Invalidation ${condition.id} references missing evidence ${evidenceId}.`
+        );
+      }
+    }
+  }
+  for (const contradiction of brief.contradictions) {
+    const evidence = evidenceById.get(contradiction.contradictingEvidenceId);
+    if (!evidence || evidence.stance !== 'CONTRADICTING') {
+      throw DissentError.invalidInput(
+        `Domain Invariant Violation: Contradiction ${contradiction.id} requires explicitly contradicting ledger evidence.`
+      );
+    }
+    if (
+      contradiction.targetType === 'THESIS_CLAIM'
+        ? contradiction.targetId !== brief.structuredThesis.id
+        : contradiction.targetType === 'ASSUMPTION'
+          ? !assumptionIds.has(contradiction.targetId)
+          : true
+    ) {
+      throw DissentError.invalidInput(
+        `Domain Invariant Violation: Contradiction ${contradiction.id} references an invalid target.`
+      );
+    }
+  }
+
   // If a human decision is attached, verify its invariants
   if (brief.humanDecision) {
     assertHumanDecisionInvariants(brief.humanDecision);
+  }
+}
+
+/** Invariants specific to a newly AI-synthesized brief, before any human action. */
+export function assertGeneratedBriefInvariants(brief: DissentBriefV1): void {
+  assertBriefInvariants(brief);
+  if (brief.humanDecision !== null) {
+    throw DissentError.invalidInput(
+      'Domain Invariant Violation: A synthesized brief must leave humanDecision null.'
+    );
+  }
+  if (brief.assumptions.some((assumption) => assumption.status === 'UNTESTED')) {
+    throw DissentError.invalidInput(
+      'Domain Invariant Violation: A synthesized brief cannot contain untested assumptions.'
+    );
+  }
+  for (const scenario of brief.stressScenarios) {
+    if (
+      !scenario.description.startsWith('Hypothetical scenario:') ||
+      !scenario.transmissionMechanism.startsWith('Hypothetical mechanism:') ||
+      !scenario.consequenceForThesis.startsWith('Potential consequence:')
+    ) {
+      throw DissentError.invalidInput(
+        `Domain Invariant Violation: Scenario ${scenario.id} must keep hypothesis, mechanism, and potential consequence explicit.`
+      );
+    }
+    if (scenario.suggestedMitigationOrHedge !== undefined) {
+      throw DissentError.invalidInput(
+        `Domain Invariant Violation: Generated scenario ${scenario.id} must not contain trading instructions.`
+      );
+    }
+  }
+  if (
+    brief.invalidationConditions.some((condition) => condition.urgency === 'IMMEDIATE_EXIT')
+  ) {
+    throw DissentError.invalidInput(
+      'Domain Invariant Violation: Thesis invalidation cannot be converted into an automated exit instruction.'
+    );
   }
 }
 

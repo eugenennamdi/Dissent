@@ -39,19 +39,21 @@
 
 ---
 
-### Phase 5: Assumption Stress-Testing Desk
-- **Objective**: Implement `StressTestingPort`.
+### Phase 5: Assumption Stress-Testing Desk (completed in Phase 3)
+- **Status**: Implemented through `StressTestingPort` with real DeepSeek structured output.
 - **Logic**:
-  - Evaluate assumptions against 3 regime shocks (`LIQUIDITY_SHOCK`, `VOLATILITY_SPIKE`, `CORRELATION_BREAKDOWN`).
-  - Formulate concrete, observable `InvalidationConditionV1` metrics and thresholds.
-- **Verification**: Verify that invalidation conditions are quantifiable and monitorable.
+  - Evaluate every supplied explicit or inferred assumption against the ledger and both adversarial arguments.
+  - Produce two or three materially distinct, explicitly hypothetical scenarios with assumption/evidence linkage and uncertainty.
+  - Formulate qualitative observable invalidation conditions when no defensible numerical threshold is available.
+- **Verification**: Enforce categorical status/evidence consistency, reference integrity, non-numeric model prose, and thesis-review rather than execution semantics.
 
 ---
 
-### Phase 6: Dissent Brief Synthesis
-- **Objective**: Implement `SynthesisPort` to assemble `DissentBriefV1`.
-- **Logic**: Combine all structured components into the canonical 11 sections.
-- **Enforcement**: Validate `assertBriefInvariants`. Ensure `humanDecision` is strictly `null`.
+### Phase 6: Dissent Brief Synthesis (completed in Phase 3)
+- **Status**: Implemented through `SynthesisPort` and the complete intelligence loop.
+- **Logic**: DeepSeek classifies existing dissent and unresolved gaps; the server deterministically assembles all canonical sections without generating new evidence.
+- **Enforcement**: `assertGeneratedBriefInvariants` validates thesis/evidence/reference integrity, prevents false contradictions, and requires `humanDecision` to remain `null`.
+- **Verification**: Run `DEEPSEEK_API_KEY=... npm run test:integration:ai` for the live five-call DeepSeek + Bitget Dissent Brief proof.
 
 ---
 

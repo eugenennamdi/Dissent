@@ -43,7 +43,9 @@ export interface StressTestingPort {
   stressTest(
     thesis: StructuredThesisV1,
     assumptions: AssumptionV1[],
-    ledger: EvidenceLedgerV1
+    ledger: EvidenceLedgerV1,
+    advocateCase: ArgumentV1,
+    dissentCase: ArgumentV1
   ): Promise<{
     stressScenarios: StressScenarioV1[];
     invalidationConditions: InvalidationConditionV1[];
