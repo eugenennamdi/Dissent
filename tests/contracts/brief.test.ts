@@ -211,4 +211,24 @@ describe('DissentBriefV1 Contracts & Invariants', () => {
 
     expect(() => assertBriefInvariants(ungroundedBrief)).toThrow(DissentError);
   });
+
+  it('rejects a human decision attached to a different run or thesis', () => {
+    const mismatchedDecision = {
+      ...mockValidBrief,
+      humanDecision: {
+        id: 'dec_wrong',
+        runId: 'run_wrong',
+        thesisId: 'th_wrong',
+        decision: 'WATCH' as const,
+        attribution: {
+          actorType: 'HUMAN_OPERATOR' as const,
+          operatorId: 'human_1',
+        },
+        decidedAt: now,
+        schemaVersion: 1 as const,
+      },
+    };
+
+    expect(() => assertBriefInvariants(mismatchedDecision)).toThrow(DissentError);
+  });
 });

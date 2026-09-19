@@ -57,12 +57,11 @@
 
 ---
 
-### Phase 7: Session Persistence & History
-- **Objective**: In-memory or lightweight KV store for analysis runs.
-- **Endpoints**:
-  - `POST /api/runs`: Create analysis run.
-  - `GET /api/runs/:id`: Poll/stream progress through stages.
-  - `POST /api/runs/:id/decision`: Commit human decision (`PROCEED` | `WATCH` | `PASS`).
+### Phase 7: Application API & Anonymous Persistence (completed in Phase 4)
+- **API**: Synchronous `POST /api/research` and explicit `POST /api/decisions` application boundaries.
+- **Persistence**: Browser-local for the anonymous hackathon MVP; there is deliberately no process-local server store or public run-retrieval endpoint.
+- **Runtime**: Node.js Vercel Function with Fluid Compute and a 120-second research route budget.
+- **Protection**: Fail-closed deployment switch, strict body/schema limits, same-origin browser policy, sanitized errors, and required Vercel WAF rate limiting.
 
 ---
 

@@ -10,7 +10,8 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:integration:bitget": "RUN_BITGET_LIVE=1 vitest run tests/integration/bitget.live.test.ts --reporter=verbose",
-    "test:integration:ai": "RUN_AI_LIVE=1 vitest run tests/integration/ai-intelligence.live.test.ts --reporter=verbose"
+    "test:integration:ai": "RUN_AI_LIVE=1 vitest run tests/integration/ai-intelligence.live.test.ts --reporter=verbose",
+    "test:integration:api": "RUN_APP_API_LIVE=1 RESEARCH_API_ENABLED=true vitest run tests/integration/application-api.live.test.ts --reporter=verbose"
   },
   "dependencies": {
     "next": "16.3.4",

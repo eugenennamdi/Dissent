@@ -272,6 +272,14 @@ export function assertBriefInvariants(brief: DissentBriefV1): void {
   // If a human decision is attached, verify its invariants
   if (brief.humanDecision) {
     assertHumanDecisionInvariants(brief.humanDecision);
+    if (
+      brief.humanDecision.runId !== brief.runId ||
+      brief.humanDecision.thesisId !== brief.structuredThesis.id
+    ) {
+      throw DissentError.invalidInput(
+        'Domain Invariant Violation: Human decision must reference the brief run and thesis.'
+      );
+    }
   }
 }
 

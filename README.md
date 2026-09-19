@@ -14,6 +14,7 @@ Dissent is an AI Trading Desk that turns a trader's market thesis into an eviden
 - **Boundaries**: Port definitions for Bitget Market Desk and Semantic AI Desk (`src/server/`)
 - **Market Evidence**: Live-verified, read-only Bitget V3 adapter for BTC/USDT, ETH/USDT, and separately derived ETH/BTC return spread and relative return
 - **Intelligence Loop**: Complete server-only DeepSeek + Bitget research loop through assumption stress testing and a validated `DissentBriefV1`
+- **Application API**: Synchronous `POST /api/research` plus explicit anonymous `POST /api/decisions`, with browser-local MVP persistence
 - **Documentation**: Specifications, architectural diagrams, and contracts located in `docs/`
 
 ---
@@ -60,9 +61,14 @@ npm run test:integration:bitget
 
 # Explicit live DeepSeek + Bitget complete Dissent Brief proof
 DEEPSEEK_API_KEY=your_key npm run test:integration:ai
+
+# Explicit live application-route proof, including human decision recording
+DEEPSEEK_API_KEY=your_key npm run test:integration:api
 ```
 
 The AI smoke defaults to `deepseek-flash` and can be overridden with `DEEPSEEK_MODEL`. It executes thesis structuring, Advocate, Dissenter, Stress Tester, and Synthesizer calls against live Bitget evidence. No model call receives tools, exchange credentials, an arbitrary host, or authority to create a human decision.
+
+See [`docs/API_INTEGRATION.md`](./docs/API_INTEGRATION.md) for the frontend contract, browser-local persistence limitations, Vercel runtime requirement, and deployment rate-limit requirement.
 
 ---
 

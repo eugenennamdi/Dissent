@@ -66,6 +66,12 @@ Output budgets and reasoning are operation-specific because DeepSeek counts reas
 - `orchestrator.port.ts`: Controls the lifecycle and transitions between analysis stages.
 - `intelligence-loop.ts`: complete research flow: structure → real market research → parallel grounded Advocate/Dissenter → assumption stress test → Dissent Brief synthesis. It snapshots preceding artifacts around AI stages, fails closed on partial research, and validates the generated brief. Persistence remains a later phase.
 
+### Application API Boundary (`src/app/api/`, `src/server/application/`)
+- `POST /api/research`: bounded same-origin submission mapped to a server-authored `ThesisInputV1`; synchronously returns the validated brief and Advocate case.
+- `POST /api/decisions`: records an explicit anonymous human action as `HumanDecisionV1`; it does not authenticate identity or execute a trade.
+- The anonymous hackathon MVP uses browser-local persistence. API responses explicitly state that no server copy or cross-device recovery exists.
+- Research uses the Node.js runtime with a 120-second route budget. Deployment requires Vercel Fluid Compute and WAF rate limiting before `RESEARCH_API_ENABLED` is switched on.
+
 ---
 
 ## 3. Orchestration Flow
