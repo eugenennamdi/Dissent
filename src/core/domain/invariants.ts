@@ -1,6 +1,10 @@
 import { DissentError } from '../errors/domain-errors';
 import type { ThesisInputV1, StructuredThesisV1 } from '../contracts/thesis';
-import type { EvidenceLedgerV1 } from '../contracts/evidence';
+import {
+  isEvidenceStale,
+  type EvidenceCategoryV1,
+  type EvidenceLedgerV1,
+} from '../contracts/evidence';
 import type { ArgumentV1 } from '../contracts/argument';
 import type { HumanDecisionV1 } from '../contracts/human-decision';
 import type { DissentBriefV1 } from '../contracts/brief';
@@ -57,6 +61,12 @@ export function assertEvidenceLedgerIntegrity(ledger: EvidenceLedgerV1): void {
     }
     ids.add(item.id);
 
+    if (item.thesisId !== ledger.thesisId) {
+      throw DissentError.invalidInput(
+        `Domain Invariant Violation: Evidence ${item.id} references thesis ${item.thesisId}, not ledger thesis ${ledger.thesisId}.`
+      );
+    }
+
     if (!item.provenance.sourceName || !item.provenance.endpointOrLocator) {
       throw DissentError.invalidInput(
         `Domain Invariant Violation: Evidence ${item.id} is missing verifiable source provenance.`
@@ -64,9 +74,53 @@ export function assertEvidenceLedgerIntegrity(ledger: EvidenceLedgerV1): void {
     }
   }
 
+  for (const item of ledger.items) {
+    if (item.nature === 'DERIVED' && item.derivedFromEvidenceIds.length === 0) {
+      throw DissentError.invalidInput(
+        `Domain Invariant Violation: Derived evidence ${item.id} has no source evidence references.`
+      );
+    }
+
+    for (const sourceId of item.derivedFromEvidenceIds) {
+      if (sourceId === item.id || !ids.has(sourceId)) {
+        throw DissentError.invalidInput(
+          `Domain Invariant Violation: Evidence ${item.id} references missing or invalid source evidence ${sourceId}.`
+        );
+      }
+    }
+  }
+
   if (ledger.summary.totalCount !== ledger.items.length) {
     throw DissentError.invalidInput(
       `Domain Invariant Violation: Ledger totalCount (${ledger.summary.totalCount}) does not match items length (${ledger.items.length}).`
+    );
+  }
+
+  const expectedCounts = {
+    supportingCount: ledger.items.filter((item) => item.stance === 'SUPPORTING').length,
+    contradictingCount: ledger.items.filter((item) => item.stance === 'CONTRADICTING').length,
+    neutralCount: ledger.items.filter((item) => item.stance === 'NEUTRAL').length,
+    staleCountAtAssembly: ledger.items.filter((item) =>
+      isEvidenceStale(item, ledger.assembledAt)
+    ).length,
+  };
+
+  for (const [field, expected] of Object.entries(expectedCounts)) {
+    const actual = ledger.summary[field as keyof typeof expectedCounts];
+    if (actual !== expected) {
+      throw DissentError.invalidInput(
+        `Domain Invariant Violation: Ledger ${field} (${actual}) does not match evidence (${expected}).`
+      );
+    }
+  }
+
+  const expectedCategories = [
+    ...new Set(ledger.items.map((item) => item.category)),
+  ].sort() as EvidenceCategoryV1[];
+  const actualCategories = [...ledger.summary.categoriesPresent].sort();
+  if (JSON.stringify(actualCategories) !== JSON.stringify(expectedCategories)) {
+    throw DissentError.invalidInput(
+      'Domain Invariant Violation: Ledger categoriesPresent does not match its evidence items.'
     );
   }
 }

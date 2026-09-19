@@ -40,7 +40,11 @@ Dissent enforces strict separation between domain logic and external infrastruct
 
 ### Market Desk Boundary (`src/server/market/`)
 - `market-desk.port.ts`: The generic domain interface for market observation collection.
-- `bitget.adapter.ts`: Concrete implementation that communicates with Bitget REST/WS APIs to pull market data (funding rates, orderbook depth, 24h ticker metrics, open interest) and map them into normalized `EvidenceV1` objects.
+- `bitget.adapter.ts`: Read-only adapter for Bitget's public V3 REST market API. It validates instruments, spot/futures tickers, and spot candles before normalization and never accepts trading credentials.
+- `bitget.schemas.ts`: Zod validation for untrusted V3 provider envelopes and payloads.
+- `decimal.ts`: deterministic integer-backed decimal calculations; financial arithmetic never passes through binary floating point.
+- `evidence.factory.ts`: canonical SHA-256 identity, content hashing, and ledger assembly.
+- `MarketDeskPort` returns an `EvidenceLedgerV1` plus explicit research gaps so a partial provider failure cannot masquerade as complete research.
 
 ### AI Analyst Boundary (`src/server/ai/`)
 - `ai-analyst.port.ts`: Strongly typed semantic operations:
@@ -71,8 +75,9 @@ Dissent enforces strict separation between domain logic and external infrastruct
        │
        ▼ (Stage: RESEARCHING)
 [Market Desk: gatherMarketObservations()] ──> (Bitget Adapter)
-       ├── Queries: Ticker, Funding, Open Interest, Orderbook
-       └── Normalizes to: EvidenceLedgerV1 (Immutable provenance)
+       ├── Queries: instruments, spot/futures tickers, spot candles
+       ├── Calculates: interval returns, return spread, and relative return deterministically
+       └── Returns: EvidenceLedgerV1 + explicit research gaps
        │
        ▼ (Stage: ARGUING)
 [AI Analyst: Parallel Argumentation]
@@ -99,6 +104,20 @@ Dissent enforces strict separation between domain logic and external infrastruct
 
 ## 4. Grounding & Tamper-Resistant Provenance
 
-1. **Deterministic Evidence Lineage**: Each `EvidenceV1` item carries an immutable `provenance` block recording the exact endpoint, observation timestamp, local retrieval timestamp, and raw JSON snapshot.
+1. **Deterministic Evidence Lineage**: Each `EvidenceV1` item carries an immutable `provenance` block recording the exact endpoint, source observation timestamp, local retrieval timestamp, content hash, and the selected upstream fields needed for audit.
 2. **Referential Integrity**: An argument point cannot claim an external observation unless its `evidenceIds` point to an entry in the run's `EvidenceLedgerV1`.
 3. **No LLM Fabrication**: Because the synthesis stage receives the completed `EvidenceLedgerV1`, any model hallucination that introduces unsourced market data violates the domain invariants and fails contract validation.
+
+## 5. Phase 1 Bitget Integration
+
+The adapter uses one current API generation consistently:
+
+- `GET /api/v3/market/instruments` — confirms that `BTCUSDT` and `ETHUSDT` spot instruments are online.
+- `GET /api/v3/market/tickers` — spot price/24h volume and USDT-perpetual funding/open-interest snapshots.
+- `GET /api/v3/market/candles` — aligned, closed `1H` spot candles for up to the V1 48-hour lookback.
+
+These endpoints are public, require no authentication, and are documented at 20 requests/second/IP. The adapter uses native `fetch`, an 8-second default timeout, and the fixed `https://api.bitget.com` origin. Agent Hub is intentionally not installed: its MCP/SDK and trading modules add no advantage to this small server-side, public-read workflow.
+
+Direct observations use Bitget's `ts` or candle timestamp. Retrieval time is recorded separately. Ticker facts have a 60-second realtime window and become stale after the bounded freshness bands. Closed candles use `HISTORICAL_RECORD`: they remain historical facts rather than becoming false with age. Derived observations reference every input evidence ID.
+
+Evidence IDs are `ev_` plus a SHA-256 hash of canonical identity data. Direct identity includes source, endpoint path, market/instrument/measurement semantics, source time or interval, canonical value, and unit; retrieval time and query-window parameters are deliberately excluded, so reprocessing the same observation is stable while a later snapshot with the same displayed price remains distinct by source timestamp. Derived identity additionally includes the ordered source evidence IDs. Ledger IDs hash the thesis ID and sorted item IDs.

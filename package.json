@@ -4,11 +4,12 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "build": "next build",
+    "build": "next build --webpack",
     "start": "next start",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "test:integration:bitget": "RUN_BITGET_LIVE=1 vitest run tests/integration/bitget.live.test.ts --reporter=verbose"
   },
   "dependencies": {
     "next": "16.3.4",

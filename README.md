@@ -12,6 +12,7 @@ Dissent is an AI Trading Desk that turns a trader's market thesis into an eviden
 - **Domain Contracts**: Zod V1 runtime contracts (`src/core/contracts/`)
 - **Domain Invariants**: Strict human-decision attribution, evidence ledger grounding, verbatim preservation (`src/core/domain/`)
 - **Boundaries**: Port definitions for Bitget Market Desk and Semantic AI Desk (`src/server/`)
+- **Market Evidence**: Live-verified, read-only Bitget V3 adapter for BTC/USDT, ETH/USDT, and separately derived ETH/BTC return spread and relative return
 - **Documentation**: Specifications, architectural diagrams, and contracts located in `docs/`
 
 ---
@@ -52,6 +53,9 @@ npm run lint
 
 # Run production build
 npm run build
+
+# Explicit live Bitget proof (public data, no credentials)
+npm run test:integration:bitget
 ```
 
 ---

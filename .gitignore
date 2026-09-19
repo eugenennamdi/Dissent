@@ -27,6 +27,7 @@ lerna-debug.log*
 coverage/
 *.lcov
 .vitest/
+.firecrawl/
 *.tsbuildinfo
 
 # OS metadata

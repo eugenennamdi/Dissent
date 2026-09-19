@@ -61,7 +61,7 @@ Crucially, **the AI researches and challenges; the human makes the trading decis
 ## 5. MVP Scope (<48-Hour Hackathon Build)
 
 - **Input**: Free-form text submission of market thesis.
-- **Market Data Port**: Real Bitget V2 market data (spot & perpetual futures tickers, 24h stats, funding rates, orderbook depth).
+- **Market Data Port**: Real public Bitget V3 market data (spot/perpetual tickers, 24h stats, funding/open interest, and spot candles), normalized into a verifiable evidence ledger.
 - **Core Orchestration**: Multi-stage pipeline with verifiable state progression.
 - **Signature Output**: 11-section Dissent Brief with complete evidence lineage.
 - **Human Call Interface**: Explicit human choice among `PROCEED`, `WATCH`, or `PASS` with optional rationale.

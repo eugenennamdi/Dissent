@@ -47,6 +47,66 @@ export const FreshnessLevelV1Schema = z.enum([
 ]);
 export type FreshnessLevelV1 = z.infer<typeof FreshnessLevelV1Schema>;
 
+export const EvidenceObservationTypeV1Schema = z.enum([
+  'LAST_PRICE',
+  'PRICE_CHANGE_24H',
+  'BASE_VOLUME_24H',
+  'CANDLE_OPEN',
+  'CANDLE_CLOSE',
+  'INTERVAL_PRICE_CHANGE',
+  'RETURN_SPREAD',
+  'RELATIVE_RETURN',
+  'FUNDING_RATE',
+  'OPEN_INTEREST',
+]);
+export type EvidenceObservationTypeV1 = z.infer<
+  typeof EvidenceObservationTypeV1Schema
+>;
+
+export const MarketInstrumentTypeV1Schema = z.enum([
+  'SPOT',
+  'PERPETUAL_FUTURES',
+  'DERIVED_SPOT_PAIR',
+]);
+export type MarketInstrumentTypeV1 = z.infer<typeof MarketInstrumentTypeV1Schema>;
+
+/**
+ * Typed market identity and measurement semantics. Provider-specific identifiers
+ * remain data rather than becoming part of the provider-independent core model.
+ */
+export const EvidenceObservationV1Schema = z
+  .object({
+    type: EvidenceObservationTypeV1Schema,
+    market: z
+      .string()
+      .regex(/^[A-Z0-9]+\/[A-Z0-9]+$/, 'Market must use BASE/QUOTE notation'),
+    instrumentType: MarketInstrumentTypeV1Schema,
+    providerSymbol: z.string().min(1),
+    interval: z.string().min(1).optional(),
+    periodStartAt: z.string().datetime().optional(),
+    periodEndAt: z.string().datetime().optional(),
+  })
+  .refine(
+    (observation) =>
+      (observation.periodStartAt === undefined) ===
+      (observation.periodEndAt === undefined),
+    'periodStartAt and periodEndAt must be supplied together'
+  )
+  .refine(
+    (observation) =>
+      observation.periodStartAt === undefined ||
+      new Date(observation.periodStartAt).getTime() <
+        new Date(observation.periodEndAt as string).getTime(),
+    'Observation period must end after it starts'
+  );
+export type EvidenceObservationV1 = z.infer<typeof EvidenceObservationV1Schema>;
+
+export const EvidenceFreshnessModeV1Schema = z.enum([
+  'AGE_SINCE_OBSERVATION',
+  'HISTORICAL_RECORD',
+]);
+export type EvidenceFreshnessModeV1 = z.infer<typeof EvidenceFreshnessModeV1Schema>;
+
 /**
  * EvidenceProvenanceV1
  * Immutable origin, locator, and timing information for an observation.
@@ -61,6 +121,7 @@ export const EvidenceProvenanceV1Schema = z.object({
   retrievedAt: z.string().datetime({ message: 'retrievedAt must be ISO 8601 datetime' }),
   validUntil: z.string().datetime().optional(),
   freshnessWindowSeconds: z.number().int().positive().optional(),
+  freshnessMode: EvidenceFreshnessModeV1Schema.default('AGE_SINCE_OBSERVATION'),
   contentHash: z.string().optional(),
   rawSnapshot: z.record(z.unknown()).optional(),
 });
@@ -80,8 +141,9 @@ export const EvidenceV1Schema = z.object({
   category: EvidenceCategoryV1Schema,
   stance: EvidenceStanceV1Schema,
   nature: EvidenceNatureV1Schema,
+  observation: EvidenceObservationV1Schema,
   provenance: EvidenceProvenanceV1Schema,
-  value: z.union([z.number(), z.string()]).optional(),
+  value: z.union([z.number().finite(), z.string().min(1)]).optional(),
   unit: z.string().optional(),
   derivedFromEvidenceIds: z.array(z.string()).default([]),
   relatedAssumptionIds: z.array(z.string()).default([]),
@@ -143,6 +205,12 @@ export function deriveEvidenceFreshness(
     }
   }
 
+  // Closed historical records do not become false merely because their
+  // observation interval is old. Their age remains visible and categorical.
+  if (evidence.provenance.freshnessMode === 'HISTORICAL_RECORD') {
+    return { level: 'HISTORICAL', ageSeconds, isStale: false };
+  }
+
   // If custom freshnessWindowSeconds is defined, scale bands accordingly
   const windowSec = evidence.provenance.freshnessWindowSeconds;
   if (windowSec !== undefined) {
@@ -185,4 +253,3 @@ export function isEvidenceStale(
 ): boolean {
   return deriveEvidenceFreshness(evidence, asOf).isStale;
 }
-

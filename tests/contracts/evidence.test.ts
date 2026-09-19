@@ -20,12 +20,19 @@ describe('Evidence & EvidenceLedger Contracts', () => {
     category: 'PRICE_ACTION',
     stance: 'SUPPORTING',
     nature: 'NUMERIC',
+    observation: {
+      type: 'BASE_VOLUME_24H',
+      market: 'ETH/BTC',
+      instrumentType: 'SPOT',
+      providerSymbol: 'ETHBTC',
+    },
     provenance: {
       sourceName: 'Bitget Spot API',
       sourceType: 'EXCHANGE_API',
       endpointOrLocator: '/api/v2/spot/market/tickers?symbol=ETHBTC',
       observedAt: now,
       retrievedAt: now,
+      freshnessMode: 'AGE_SINCE_OBSERVATION',
       freshnessWindowSeconds: 120,
       contentHash: 'sha256_mock_hash_1',
       rawSnapshot: { volume24h: '12450.32', change24h: '+0.034' },
@@ -45,12 +52,19 @@ describe('Evidence & EvidenceLedger Contracts', () => {
     category: 'FUNDING_RATE',
     stance: 'CONTRADICTING',
     nature: 'NUMERIC',
+    observation: {
+      type: 'FUNDING_RATE',
+      market: 'BTC/USDT',
+      instrumentType: 'PERPETUAL_FUTURES',
+      providerSymbol: 'BTCUSDT',
+    },
     provenance: {
       sourceName: 'Bitget Futures API',
       sourceType: 'EXCHANGE_API',
       endpointOrLocator: '/api/v2/mix/market/current-funding-rate',
       observedAt: now,
       retrievedAt: now,
+      freshnessMode: 'AGE_SINCE_OBSERVATION',
     },
     value: '+0.03%',
     unit: 'funding_rate',
@@ -143,12 +157,19 @@ describe('Evidence & EvidenceLedger Contracts', () => {
       category: 'PRICE_ACTION',
       stance: 'NEUTRAL',
       nature: 'NUMERIC',
+      observation: {
+        type: 'LAST_PRICE',
+        market: 'BTC/USDT',
+        instrumentType: 'SPOT',
+        providerSymbol: 'BTCUSDT',
+      },
       provenance: {
         sourceName: 'Bitget Spot',
         sourceType: 'EXCHANGE_API',
         endpointOrLocator: '/api/v2/spot/market/ticker',
         observedAt: baseTime.toISOString(),
         retrievedAt: baseTime.toISOString(),
+        freshnessMode: 'AGE_SINCE_OBSERVATION',
       },
       derivedFromEvidenceIds: [],
       relatedAssumptionIds: [],
@@ -188,12 +209,19 @@ describe('Evidence & EvidenceLedger Contracts', () => {
       category: 'FUNDING_RATE',
       stance: 'NEUTRAL',
       nature: 'NUMERIC',
+      observation: {
+        type: 'FUNDING_RATE',
+        market: 'BTC/USDT',
+        instrumentType: 'PERPETUAL_FUTURES',
+        providerSymbol: 'BTCUSDT',
+      },
       provenance: {
         sourceName: 'Bitget Futures',
         sourceType: 'EXCHANGE_API',
         endpointOrLocator: '/api/v2/mix/market/current-funding-rate',
         observedAt: baseTime.toISOString(),
         retrievedAt: baseTime.toISOString(),
+        freshnessMode: 'AGE_SINCE_OBSERVATION',
         validUntil: expiryTime.toISOString(),
       },
       derivedFromEvidenceIds: [],
@@ -210,5 +238,71 @@ describe('Evidence & EvidenceLedger Contracts', () => {
     const afterExpiry = new Date('2026-09-18T12:06:00.000Z');
     expect(deriveEvidenceFreshness(expiringEvidence, afterExpiry).level).toBe('STALE');
     expect(isEvidenceStale(expiringEvidence, afterExpiry)).toBe(true);
+  });
+
+  it('keeps closed historical records historical without declaring them stale', () => {
+    const historical = EvidenceV1Schema.parse({
+      ...mockEvidence1,
+      observation: {
+        type: 'CANDLE_CLOSE',
+        market: 'ETH/BTC',
+        instrumentType: 'SPOT',
+        providerSymbol: 'ETHBTC',
+        interval: '1H',
+        periodStartAt: '2020-01-01T00:00:00.000Z',
+        periodEndAt: '2020-01-01T01:00:00.000Z',
+      },
+      provenance: {
+        ...mockEvidence1.provenance,
+        observedAt: '2020-01-01T01:00:00.000Z',
+        retrievedAt: '2026-09-19T12:00:00.000Z',
+        freshnessMode: 'HISTORICAL_RECORD',
+        freshnessWindowSeconds: undefined,
+      },
+    });
+
+    expect(deriveEvidenceFreshness(historical, '2026-09-19T12:00:00.000Z')).toMatchObject({
+      level: 'HISTORICAL',
+      isStale: false,
+    });
+  });
+
+  it('rejects missing derived lineage and incorrect ledger summaries', () => {
+    const derivedWithoutSources: EvidenceV1 = {
+      ...mockEvidence1,
+      id: 'ev_derived_missing',
+      nature: 'DERIVED',
+      observation: {
+        type: 'RELATIVE_RETURN',
+        market: 'ETH/BTC',
+        instrumentType: 'DERIVED_SPOT_PAIR',
+        providerSymbol: 'ETHUSDT:BTCUSDT',
+      },
+      derivedFromEvidenceIds: [],
+    };
+    const ledger: EvidenceLedgerV1 = {
+      id: 'led_bad_lineage',
+      thesisId: 'th_123',
+      items: [derivedWithoutSources],
+      summary: {
+        totalCount: 1,
+        supportingCount: 1,
+        contradictingCount: 0,
+        neutralCount: 0,
+        staleCountAtAssembly: 0,
+        categoriesPresent: ['PRICE_ACTION'],
+      },
+      assembledAt: now,
+      schemaVersion: 1,
+    };
+
+    expect(() => assertEvidenceLedgerIntegrity(ledger)).toThrow(DissentError);
+    expect(() =>
+      assertEvidenceLedgerIntegrity({
+        ...ledger,
+        items: [mockEvidence1],
+        summary: { ...ledger.summary, supportingCount: 0, neutralCount: 1 },
+      })
+    ).toThrow(DissentError);
   });
 });

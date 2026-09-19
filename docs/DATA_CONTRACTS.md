@@ -77,6 +77,12 @@ Normalized market observation with tamper-resistant provenance.
   - `category`: `PRICE_ACTION` | `ORDERBOOK_DEPTH` | `FUNDING_RATE` | `OPEN_INTEREST` | `LIQUIDATION_FLOW` | `VOLATILITY_SURFACE` | `ON_CHAIN_ACTIVITY` | `MACRO_METRIC` | `SENTIMENT_METRIC` | `CORRELATION` | `OTHER`.
   - `stance`: Relative to thesis: `SUPPORTING` | `CONTRADICTING` | `NEUTRAL`.
   - `nature`: `NUMERIC` | `QUALITATIVE` | `DERIVED`.
+  - `observation`: Typed measurement identity:
+    - `type`: last price, 24h change/volume, candle open/close, interval change, return spread, relative return, funding, or open interest.
+    - `market`: Canonical `BASE/QUOTE` notation.
+    - `instrumentType`: `SPOT` | `PERPETUAL_FUTURES` | `DERIVED_SPOT_PAIR`.
+    - `providerSymbol`: Upstream symbol or labeled derived inputs.
+    - Optional interval and period boundaries.
   - `provenance`: Sourced attribution object:
     - `sourceName`: e.g. "Bitget Market API"
     - `sourceType`: `EXCHANGE_API` | `ON_CHAIN_INDEXER` | `NEWS_WIRE` | `DERIVED_ANALYTICS` | `PRIMARY_DOCUMENT`
@@ -85,6 +91,7 @@ Normalized market observation with tamper-resistant provenance.
     - `retrievedAt`: Ingestion timestamp.
     - `validUntil`: Optional explicit expiry datetime.
     - `freshnessWindowSeconds`: Optional TTL window for freshness tier evaluation.
+    - `freshnessMode`: `AGE_SINCE_OBSERVATION` for snapshots/derived current metrics, or `HISTORICAL_RECORD` for immutable closed candles.
     - `contentHash`: Optional payload hash for tamper protection.
     - `rawSnapshot`: Key upstream data fields.
   - `value`: Optional numeric or string value.
@@ -95,12 +102,26 @@ Normalized market observation with tamper-resistant provenance.
 - **Freshness Invariant**:
   - Freshness is **not** stored as an immutable static boolean or enum on `EvidenceV1` (which would rot as time elapses).
   - Freshness is deterministically derived via domain helpers `deriveEvidenceFreshness(evidence, asOf)` and `isEvidenceStale(evidence, asOf)` relative to an explicit evaluation timestamp.
+  - A historical record is categorized as `HISTORICAL` but is not stale solely because its interval is old. An explicit `validUntil` still takes precedence.
 - **`EvidenceLedgerV1` Fields**:
   - `id`: Unique ledger ID.
   - `thesisId`: Linked thesis ID.
   - `items`: Array of `EvidenceV1`.
   - `summary`: Counts of total, supporting, contradicting, neutral, and `staleCountAtAssembly`.
   - `assembledAt`: ISO 8601 timestamp.
+- **Ledger Integrity**:
+  - IDs are unique, all item thesis IDs match the ledger, every derived source ID exists, summary counts/categories are exact, and `staleCountAtAssembly` is recomputed from `assembledAt`.
+
+### Market research boundary
+
+`MarketDeskPort.gatherMarketObservations` returns `{ ledger, gaps, complete }`. A gap identifies the affected market, research dimension, and bounded failure class (`TIMEOUT`, `NETWORK_FAILURE`, `PROVIDER_ERROR`, `INVALID_RESPONSE`, `INSUFFICIENT_DATA`, `STALE_DATA`, or `UNSUPPORTED`). Valid independent observations are retained; missing data is never synthesized.
+
+For an `ETH/BTC` thesis, V1 exposes two different derived measurements and does not use them interchangeably:
+
+- Return spread (percentage points): `ETH/USDT return % - BTC/USDT return %`
+- Exact relative return (%): `((1 + ETH return / 100) / (1 + BTC return / 100) - 1) * 100`
+
+Both inputs use the same closed 1H interval. Each interval return references its candle-open and candle-close evidence, while both relative observations reference the two aligned interval returns. Values are deterministic decimal strings produced by integer arithmetic. The spread has unit `percentage points`; the relative return has unit `%`.
 
 ---
 

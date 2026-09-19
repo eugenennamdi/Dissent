@@ -5,13 +5,11 @@
 ---
 
 ### Phase 1: Real Bitget Market-Data Integration
-- **Objective**: Implement `src/server/market/bitget.adapter.ts` with real Bitget V2 API calls.
-- **Endpoints to Wire**:
-  - `GET /api/v2/mix/market/ticker`: Ticker, 24h high/low/volume, last price.
-  - `GET /api/v2/mix/market/current-funding-rate`: Current perpetual funding rate and predicted next rate.
-  - `GET /api/v2/mix/market/open-interest`: Total open interest and recent change.
-  - `GET /api/v2/spot/market/orderbook`: Top bid/ask depth and spread calculation.
-- **Verification**: Integration tests pulling real public data for BTC, ETH, and SOL without requiring private trade credentials.
+- **Status**: Implemented and live-verified for the V1 reference assets BTC and ETH.
+- **Endpoints**: Current public V3 `instruments`, `tickers`, and `candles` endpoints. One API generation is used consistently for spot and USDT futures.
+- **Coverage**: BTC/USDT and ETH/USDT spot snapshots/history; optional USDT-perpetual funding and open-interest fields; deterministic interval returns, ETH-minus-BTC return spread, and exact ETH/BTC relative return.
+- **Deliberate limitation**: The V3 ticker page exposes `openInterest` without defining its unit. The value is preserved as `BITGET_NATIVE_OPEN_INTEREST` with an explicit metadata limitation rather than inventing a unit. Order-book analysis is outside this focused Phase 1 proof.
+- **Verification**: Unit tests use realistic V3 fixtures and mocked fetch. Run the opt-in live proof with `npm run test:integration:bitget`; it requires outbound access to `api.bitget.com` but no key.
 
 ---
 
@@ -22,7 +20,7 @@
 
 ---
 
-### Phase 3: Evidence Normalization & Evidence Ledger
+### Phase 3: Evidence Normalization & Evidence Ledger (foundation completed in Phase 1)
 - **Objective**: Connect market observations to the structured thesis.
 - **Logic**:
   - Ingest raw Bitget data snapshots.
