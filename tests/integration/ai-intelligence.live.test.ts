@@ -114,7 +114,7 @@ describe.skipIf(!runLive)('DeepSeek + Bitget live intelligence integration', () 
     expect(() =>
       assertArgumentEvidenceGrounding(result.dissentCase, result.evidenceLedger)
     ).not.toThrow();
-    expect(result.modelCalls).toHaveLength(5);
+    expect(result.modelCalls).toHaveLength(6);
     expect(result.modelCalls.every((call) => call.provider === 'DeepSeek')).toBe(true);
     expect(result.modelCalls.every((call) => call.model.length > 0 && call.latencyMs >= 0)).toBe(
       true

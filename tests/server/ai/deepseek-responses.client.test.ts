@@ -108,6 +108,7 @@ describe('DeepSeekResponsesClient', () => {
   });
 
   it('maps malformed model output and incomplete responses to typed failures', async () => {
+    const warning = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     const malformed = new DeepSeekResponsesClient({
       apiKey: 'test-key',
       fetchImpl: (async () => deepSeekResponse('{not-json')) as unknown as typeof fetch,
@@ -139,6 +140,7 @@ describe('DeepSeekResponsesClient', () => {
       code: 'OUTPUT_TRUNCATED',
       retryable: true,
       details: {
+        provider: 'DeepSeek',
         operation: 'testOperation',
         requestedModel: 'deepseek-flash',
         actualModel: 'deepseek-flash',
@@ -149,6 +151,27 @@ describe('DeepSeekResponsesClient', () => {
         usage: { outputTokens: 100, reasoningTokens: 90 },
       },
     });
+    expect(warning).toHaveBeenCalledWith('DISSENT_AI_OUTPUT_TRUNCATED', {
+      provider: 'DeepSeek',
+      operation: 'testOperation',
+      requestedModel: 'deepseek-flash',
+      actualModel: 'deepseek-flash',
+      responseStatus: 'incomplete',
+      incompleteReason: 'max_output_tokens',
+      configuredOutputTokenBudget: 100,
+      configuredReasoningEffort: 'low',
+      usage: {
+        inputTokens: 20,
+        cachedInputTokens: 0,
+        outputTokens: 100,
+        reasoningTokens: 90,
+        totalTokens: 120,
+      },
+      requestId: 'req_test',
+    });
+    expect(JSON.stringify(warning.mock.calls)).not.toContain('test-key');
+    expect(JSON.stringify(warning.mock.calls)).not.toContain('untrusted');
+    warning.mockRestore();
   });
 
   it('classifies rate limits and authentication failures', async () => {
@@ -172,6 +195,140 @@ describe('DeepSeekResponsesClient', () => {
       code: 'CONFIGURATION_ERROR',
       retryable: false,
     });
+  });
+
+  it('logs safe operation and issue-path diagnostics for invalid stress output', async () => {
+    const warning = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const stressSchema = z.object({
+      assumptionAssessments: z.array(
+        z.object({
+          assumptionId: z.string(),
+          primaryChallengingEvidenceId: z.string(),
+        })
+      ),
+    });
+    const client = new DeepSeekResponsesClient({
+      apiKey: 'secret-test-key',
+      fetchImpl: (async () =>
+        deepSeekResponse(
+          JSON.stringify({ assumptionAssessments: [{ assumptionId: 'asm_safe_1' }] })
+        )) as unknown as typeof fetch,
+    });
+
+    await expect(
+      client.generateStructured({
+        ...request,
+        operation: 'stressTest',
+        schema: stressSchema,
+      })
+    ).rejects.toMatchObject({
+      code: 'MODEL_OUTPUT_INVALID',
+      details: {
+        validationCategory: 'APPLICATION_SCHEMA_VALIDATION',
+        assumptionId: 'asm_safe_1',
+        issues: [
+          {
+            code: 'invalid_type',
+            path: 'assumptionAssessments.0.primaryChallengingEvidenceId',
+            expected: 'string',
+            received: 'undefined',
+          },
+        ],
+      },
+    });
+    expect(warning).toHaveBeenCalledWith(
+      'DISSENT_AI_OUTPUT_INVALID',
+      expect.objectContaining({
+        provider: 'DeepSeek',
+        operation: 'stressTest',
+        requestedModel: 'deepseek-flash',
+        actualModel: 'deepseek-flash',
+        validationCategory: 'APPLICATION_SCHEMA_VALIDATION',
+        assumptionId: 'asm_safe_1',
+        issues: [
+          {
+            code: 'invalid_type',
+            path: 'assumptionAssessments.0.primaryChallengingEvidenceId',
+            expected: 'string',
+            received: 'undefined',
+          },
+        ],
+        requestId: 'req_test',
+      })
+    );
+    expect(JSON.stringify(warning.mock.calls)).not.toContain('secret-test-key');
+    warning.mockRestore();
+  });
+
+  it('preserves argument stance, point path, and attempt for invalid argument output', async () => {
+    const warning = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const argumentSchema = z
+      .object({
+        summaryInterpretation: z.string(),
+        points: z.array(
+          z
+            .object({
+              title: z.string(),
+              interpretation: z.string(),
+              evidenceIds: z.array(z.string()),
+              targetAssumptionIds: z.array(z.string()),
+              weight: z.string(),
+            })
+            .strict()
+        ),
+        counterweights: z.array(z.string()),
+      })
+      .strict();
+    const client = new DeepSeekResponsesClient({
+      apiKey: 'secret-test-key',
+      fetchImpl: (async () =>
+        deepSeekResponse(
+          JSON.stringify({
+            summaryInterpretation: 'Evidence remains limited',
+            points: [
+              {
+                title: 'Persistence limitation',
+                evidenceIds: ['ev_safe'],
+                targetAssumptionIds: [],
+                weight: 'PRIMARY',
+              },
+            ],
+            counterweights: [],
+          })
+        )) as unknown as typeof fetch,
+    });
+
+    await expect(
+      client.generateStructured({
+        ...request,
+        operation: 'buildDissentCase',
+        attempt: 2,
+        schema: argumentSchema,
+      })
+    ).rejects.toMatchObject({
+      code: 'MODEL_OUTPUT_INVALID',
+      details: {
+        validationCategory: 'APPLICATION_SCHEMA_VALIDATION',
+        invariantCode: 'ARGUMENT_OUTPUT_SCHEMA_VALID',
+        issuePath: 'points.0.interpretation',
+        argumentStance: 'DISSENTER',
+        argumentPointIndex: 0,
+        attempt: 2,
+      },
+    });
+    expect(warning).toHaveBeenCalledWith(
+      'DISSENT_AI_OUTPUT_INVALID',
+      expect.objectContaining({
+        operation: 'buildDissentCase',
+        invariantCode: 'ARGUMENT_OUTPUT_SCHEMA_VALID',
+        issuePath: 'points.0.interpretation',
+        argumentStance: 'DISSENTER',
+        argumentPointIndex: 0,
+        attempt: 2,
+      })
+    );
+    expect(JSON.stringify(warning.mock.calls)).not.toContain('secret-test-key');
+    warning.mockRestore();
   });
 
   it('classifies network failures without leaking the credential', async () => {

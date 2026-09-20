@@ -209,7 +209,8 @@ export class DeepSeekResponsesClient implements StructuredModelPort {
       parsedResponse.data.status === 'incomplete' &&
       incompleteReason === 'max_output_tokens'
     ) {
-      throw DissentError.outputTruncated(request.operation, {
+      const details = {
+        provider: 'DeepSeek',
         operation: request.operation,
         requestedModel: this.model,
         actualModel: parsedResponse.data.model,
@@ -219,7 +220,9 @@ export class DeepSeekResponsesClient implements StructuredModelPort {
         configuredReasoningEffort: reasoningEffort,
         usage,
         requestId,
-      });
+      };
+      console.warn('DISSENT_AI_OUTPUT_TRUNCATED', details);
+      throw DissentError.outputTruncated(request.operation, details);
     }
     if (parsedResponse.data.status !== 'completed') {
       throw DissentError.modelOutputInvalid(
@@ -269,6 +272,64 @@ export class DeepSeekResponsesClient implements StructuredModelPort {
     }
     const validated = request.schema.safeParse(modelValue);
     if (!validated.success) {
+      const issues = validated.error.issues.map((issue) => ({
+        code: issue.code,
+        path: issue.path.map(String).join('.'),
+        ...(issue.code === 'invalid_type'
+          ? { expected: issue.expected, received: issue.received }
+          : {}),
+      }));
+      const failedAssessmentIndex = validated.error.issues.find(
+        (issue) => issue.path[0] === 'assumptionAssessments' && typeof issue.path[1] === 'number'
+      )?.path[1];
+      const failedAssumptionId =
+        typeof failedAssessmentIndex === 'number' &&
+        modelValue !== null &&
+        typeof modelValue === 'object' &&
+        'assumptionAssessments' in modelValue &&
+        Array.isArray(modelValue.assumptionAssessments)
+          ? modelValue.assumptionAssessments[failedAssessmentIndex]?.assumptionId
+          : undefined;
+      const safeAssumptionId =
+        typeof failedAssumptionId === 'string' &&
+        /^asm_[A-Za-z0-9_-]{1,100}$/.test(failedAssumptionId)
+          ? failedAssumptionId
+          : undefined;
+      const issuePath = issues[0]?.path;
+      const argumentStance =
+        request.operation === 'buildAdvocateCase'
+          ? 'ADVOCATE'
+          : request.operation === 'buildDissentCase'
+            ? 'DISSENTER'
+            : undefined;
+      const argumentPointMatch = issuePath
+        ? /(?:^|\.)points(?:\.|\[)(\d+)/.exec(issuePath)
+        : null;
+      const argumentPointIndex = argumentPointMatch
+        ? Number(argumentPointMatch[1])
+        : undefined;
+      const invariantCode = argumentStance
+        ? 'ARGUMENT_OUTPUT_SCHEMA_VALID'
+        : 'MODEL_OUTPUT_APPLICATION_SCHEMA_VALID';
+      const safeExplanation = argumentStance
+        ? 'The argument response did not match the required application schema.'
+        : 'The structured response did not match the required application schema.';
+      console.warn('DISSENT_AI_OUTPUT_INVALID', {
+        provider: 'DeepSeek',
+        operation: request.operation,
+        requestedModel: this.model,
+        actualModel: parsedResponse.data.model,
+        validationCategory: 'APPLICATION_SCHEMA_VALIDATION',
+        invariantCode,
+        issuePath,
+        safeExplanation,
+        argumentStance,
+        argumentPointIndex,
+        assumptionId: safeAssumptionId,
+        issues,
+        attempt: request.attempt ?? 1,
+        requestId,
+      });
       throw DissentError.modelOutputInvalid(
         request.operation,
         'Structured output did not match its application schema.',
@@ -280,7 +341,15 @@ export class DeepSeekResponsesClient implements StructuredModelPort {
           configuredReasoningEffort: reasoningEffort,
           usage,
           structuredOutputCharacters: outputText.length,
-          issues: validated.error.issues,
+          validationCategory: 'APPLICATION_SCHEMA_VALIDATION',
+          invariantCode,
+          issuePath,
+          safeExplanation,
+          argumentStance,
+          argumentPointIndex,
+          assumptionId: safeAssumptionId,
+          issues,
+          attempt: request.attempt ?? 1,
         }
       );
     }
@@ -289,6 +358,7 @@ export class DeepSeekResponsesClient implements StructuredModelPort {
       data: validated.data,
       metadata: {
         provider: 'DeepSeek',
+        requestedModel: this.model,
         model: parsedResponse.data.model,
         latencyMs,
         requestId,

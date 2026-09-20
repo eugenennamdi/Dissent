@@ -15,10 +15,11 @@ import type { MarketDeskPort } from '@/server/market/market-desk.port';
 import {
   FIXED_AT,
   QueueModel,
+  assumptionAssessmentDraftFromRequest,
   argumentDraft,
   extractionOutput,
   makeEvidenceLedger,
-  stressDraftFromRequest,
+  stressResearchDraftFromRequest,
   synthesisDraftFromRequest,
   thesisInput,
 } from '../../server/ai/fixtures';
@@ -35,11 +36,18 @@ function request(body: string, headers: Record<string, string> = {}): Request {
   });
 }
 
-function groundedArgumentDraft(interpretation?: string) {
+function groundedArgumentDraft(
+  interpretation?: string,
+  relation: 'SUPPORTS' | 'CHALLENGES' = 'SUPPORTS'
+) {
   const draft = argumentDraft(interpretation);
   return {
     ...draft,
-    points: draft.points.map((point) => ({ ...point, targetAssumptionIds: [] })),
+    points: draft.points.map((point) => ({
+      ...point,
+      targetAssumptionIds: [],
+      relation,
+    })),
   };
 }
 
@@ -55,16 +63,18 @@ function mockedResearchExecutor() {
   const advocate = groundedArgumentDraft();
   const dissent = {
     ...groundedArgumentDraft(
-      'The evidence does not establish that relative momentum will persist'
+      'The historical observation does not establish forward persistence',
+      'CHALLENGES'
     ),
-    summaryInterpretation:
+    summaryRationale:
       'Available market evidence does not establish persistence across the thesis horizon',
   };
   const model = new QueueModel([
     extractionOutput,
     advocate,
     dissent,
-    stressDraftFromRequest,
+    assumptionAssessmentDraftFromRequest,
+    stressResearchDraftFromRequest,
     synthesisDraftFromRequest,
   ]);
   let tick = 0;

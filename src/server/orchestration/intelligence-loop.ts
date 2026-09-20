@@ -122,10 +122,55 @@ export class IntelligenceLoop {
       JSON.stringify(comparableArgument(advocateCase)) ===
       JSON.stringify(comparableArgument(dissentCase))
     ) {
-      throw DissentError.modelOutputInvalid(
-        'argumentation',
-        'Advocate and Dissenter returned materially identical cases.'
+      const argumentCalls = (this.ai.getModelCallRecords?.() ?? []).filter(
+        (call) =>
+          call.operation === 'buildAdvocateCase' || call.operation === 'buildDissentCase'
       );
+      const actualModels = [...new Set(argumentCalls.map((call) => call.model))];
+      const requestedModels = [
+        ...new Set(
+          argumentCalls.flatMap((call) =>
+            call.requestedModel ? [call.requestedModel] : []
+          )
+        ),
+      ];
+      const error = DissentError.modelOutputInvalid(
+        'argumentation',
+        'Advocate and Dissenter returned materially identical cases.',
+        {
+          validationCategory: 'CROSS_ARGUMENT_VALIDATION',
+          invariantCode: 'ADVOCATE_DISSENTER_MUST_BE_MATERIALLY_DISTINCT',
+          issuePath: 'arguments',
+          issues: [
+            {
+              code: 'ADVOCATE_DISSENTER_MUST_BE_MATERIALLY_DISTINCT',
+              path: 'arguments',
+            },
+          ],
+          argumentStance: 'CROSS_ARGUMENT',
+          safeExplanation:
+            'Advocate and Dissenter must provide materially distinct interpretations.',
+          attempt: Math.max(...argumentCalls.map((call) => call.attempt ?? 1), 1),
+        }
+      );
+      console.warn('DISSENT_AI_ARGUMENT_INVALID', {
+        provider: 'DeepSeek',
+        operation: 'argumentation',
+        requestedModel: requestedModels.length === 1 ? requestedModels[0] : undefined,
+        actualModel: actualModels.length === 1 ? actualModels[0] : undefined,
+        validationCategory: error.details?.validationCategory,
+        invariantCode: error.details?.invariantCode,
+        issuePath: error.details?.issuePath,
+        argumentStance: error.details?.argumentStance,
+        argumentPointIndex: undefined,
+        evidenceId: undefined,
+        assumptionId: undefined,
+        safeExplanation: error.details?.safeExplanation,
+        issues: error.details?.issues,
+        attempt: error.details?.attempt,
+        requestId: undefined,
+      });
+      throw error;
     }
     assertArgumentEvidenceGrounding(advocateCase, research.ledger);
     assertArgumentEvidenceGrounding(dissentCase, research.ledger);

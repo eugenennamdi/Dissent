@@ -118,40 +118,90 @@ export const THESIS_EXTRACTION_JSON_SCHEMA: Record<string, unknown> = {
   },
 };
 
-const InterpretationPrefix = /^(This suggests|This may|One interpretation is|A limitation is|The evidence does not establish)\b/;
 const NonNumericTextPattern = '^[^0-9%$€£¥]*$';
+
+export const ArgumentRelationSchema = z.enum([
+  'SUPPORTS',
+  'CHALLENGES',
+  'CONTEXT_ONLY',
+  'LIMITS_CONFIDENCE',
+]);
+
+const ArgumentWeightSchema = z.enum(['PRIMARY', 'SECONDARY', 'CONTEXTUAL']);
+
+const EvidenceInterpretationDraftPointSchema = z
+  .object({
+    pointKind: z.literal('EVIDENCE_INTERPRETATION'),
+    title: z.string().min(1).max(120),
+    evidenceClaimIds: z.array(z.string().min(1)).min(1).max(4),
+    targetAssumptionIds: z.array(z.string().min(1)).max(4),
+    relation: ArgumentRelationSchema,
+    qualitativeRationale: z.string().min(1).max(500),
+    weight: ArgumentWeightSchema,
+  })
+  .strict();
+
+const ResearchLimitationDraftPointSchema = z
+  .object({
+    pointKind: z.literal('RESEARCH_LIMITATION'),
+    title: z.string().min(1).max(120),
+    researchLimitationId: z.string().min(1),
+    targetAssumptionIds: z.array(z.string().min(1)).max(4),
+    relation: z.literal('LIMITS_CONFIDENCE'),
+    qualitativeRationale: z.string().min(1).max(500),
+    weight: ArgumentWeightSchema,
+  })
+  .strict();
 
 export const ArgumentDraftOutputSchema = z
   .object({
-    summaryInterpretation: z.string().min(1).max(500),
+    summaryRationale: z.string().min(1).max(500),
     points: z
       .array(
-        z
-          .object({
-            title: z.string().min(1).max(120),
-            interpretation: z.string().min(1).max(500).regex(InterpretationPrefix),
-            evidenceIds: z.array(z.string().min(1)).min(1).max(4),
-            targetAssumptionIds: z.array(z.string().min(1)).max(4),
-            weight: z.enum(['PRIMARY', 'SECONDARY', 'CONTEXTUAL']),
-          })
-          .strict()
+        z.discriminatedUnion('pointKind', [
+          EvidenceInterpretationDraftPointSchema,
+          ResearchLimitationDraftPointSchema,
+        ])
       )
       .min(1)
       .max(5),
-    counterweights: z.array(z.string().min(1).max(300)).max(4),
   })
   .strict();
 
 export function createArgumentDraftJsonSchema(
-  evidenceIds: string[],
-  assumptionIds: string[]
+  evidenceClaimIds: string[],
+  assumptionIds: string[],
+  researchLimitationIds: string[]
 ): Record<string, unknown> {
+  const commonProperties = {
+    title: {
+      type: 'string',
+      minLength: 1,
+      maxLength: 120,
+      pattern: NonNumericTextPattern,
+    },
+    targetAssumptionIds: {
+      type: 'array',
+      maxItems: 4,
+      items: { type: 'string', enum: assumptionIds },
+    },
+    qualitativeRationale: {
+      type: 'string',
+      minLength: 1,
+      maxLength: 500,
+      pattern: NonNumericTextPattern,
+    },
+    weight: {
+      type: 'string',
+      enum: ['PRIMARY', 'SECONDARY', 'CONTEXTUAL'],
+    },
+  };
   return {
     type: 'object',
     additionalProperties: false,
-    required: ['summaryInterpretation', 'points', 'counterweights'],
+    required: ['summaryRationale', 'points'],
     properties: {
-      summaryInterpretation: {
+      summaryRationale: {
         type: 'string',
         minLength: 1,
         maxLength: 500,
@@ -162,88 +212,129 @@ export function createArgumentDraftJsonSchema(
         minItems: 1,
         maxItems: 5,
         items: {
-          type: 'object',
-          additionalProperties: false,
-          required: [
-            'title',
-            'interpretation',
-            'evidenceIds',
-            'targetAssumptionIds',
-            'weight',
+          anyOf: [
+            {
+              type: 'object',
+              additionalProperties: false,
+              required: [
+                'pointKind',
+                'title',
+                'evidenceClaimIds',
+                'targetAssumptionIds',
+                'relation',
+                'qualitativeRationale',
+                'weight',
+              ],
+              properties: {
+                pointKind: {
+                  type: 'string',
+                  enum: ['EVIDENCE_INTERPRETATION'],
+                },
+                ...commonProperties,
+                evidenceClaimIds: {
+                  type: 'array',
+                  minItems: 1,
+                  maxItems: 4,
+                  items: { type: 'string', enum: evidenceClaimIds },
+                },
+                relation: {
+                  type: 'string',
+                  enum: ['SUPPORTS', 'CHALLENGES', 'CONTEXT_ONLY', 'LIMITS_CONFIDENCE'],
+                },
+              },
+            },
+            {
+              type: 'object',
+              additionalProperties: false,
+              required: [
+                'pointKind',
+                'title',
+                'researchLimitationId',
+                'targetAssumptionIds',
+                'relation',
+                'qualitativeRationale',
+                'weight',
+              ],
+              properties: {
+                pointKind: {
+                  type: 'string',
+                  enum: ['RESEARCH_LIMITATION'],
+                },
+                ...commonProperties,
+                researchLimitationId: {
+                  type: 'string',
+                  enum: researchLimitationIds,
+                },
+                relation: { type: 'string', enum: ['LIMITS_CONFIDENCE'] },
+              },
+            },
           ],
-          properties: {
-            title: {
-              type: 'string',
-              minLength: 1,
-              maxLength: 120,
-              pattern: NonNumericTextPattern,
-            },
-            interpretation: {
-              type: 'string',
-              minLength: 1,
-              maxLength: 500,
-              pattern:
-                '^(This suggests|This may|One interpretation is|A limitation is|The evidence does not establish)\\b[^0-9%$€£¥]*$',
-            },
-            evidenceIds: {
-              type: 'array',
-              minItems: 1,
-              maxItems: 4,
-              items: { type: 'string', enum: evidenceIds },
-            },
-            targetAssumptionIds: {
-              type: 'array',
-              maxItems: 4,
-              items: { type: 'string', enum: assumptionIds },
-            },
-            weight: {
-              type: 'string',
-              enum: ['PRIMARY', 'SECONDARY', 'CONTEXTUAL'],
-            },
-          },
-        },
-      },
-      counterweights: {
-        type: 'array',
-        maxItems: 4,
-        items: {
-          type: 'string',
-          minLength: 1,
-          maxLength: 300,
-          pattern: NonNumericTextPattern,
         },
       },
     },
   };
 }
 
-const StressFindingPrefix =
-  /^(Current evidence suggests|Current evidence may|Available evidence does not establish|A limitation is)\b/;
+const AssumptionAssessmentItemSchema = z
+  .object({
+    assumptionId: z.string().min(1),
+    status: z.enum([
+      'SUPPORTED',
+      'QUESTIONED',
+      'CONTRADICTED',
+      'INSUFFICIENT_EVIDENCE',
+    ]),
+    supportingEvidenceIds: z.array(z.string().min(1)).max(4),
+    opposingEvidenceIds: z.array(z.string().min(1)).max(4),
+  })
+  .strict()
+  .superRefine((assessment, context) => {
+    const supportingCount = assessment.supportingEvidenceIds.length;
+    const opposingCount = assessment.opposingEvidenceIds.length;
+    if (assessment.status === 'SUPPORTED' && (supportingCount === 0 || opposingCount > 0)) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['status'],
+        message: 'SUPPORTED requires supporting evidence and no opposing evidence.',
+      });
+    }
+    if (assessment.status === 'QUESTIONED' && opposingCount === 0) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['status'],
+        message: 'QUESTIONED requires challenging evidence.',
+      });
+    }
+    if (assessment.status === 'CONTRADICTED' && (supportingCount > 0 || opposingCount === 0)) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['status'],
+        message: 'CONTRADICTED requires opposing evidence and no supporting evidence.',
+      });
+    }
+    if (
+      assessment.status === 'INSUFFICIENT_EVIDENCE' &&
+      (supportingCount > 0 || opposingCount > 0)
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['status'],
+        message: 'INSUFFICIENT_EVIDENCE requires empty evidence-role arrays.',
+      });
+    }
+  });
 
-export const StressTestDraftOutputSchema = z
+export const AssumptionAssessmentDraftOutputSchema = z
   .object({
     assumptionAssessments: z
-      .array(
-        z
-          .object({
-            assumptionId: z.string().min(1),
-            status: z.enum([
-              'SUPPORTED',
-              'QUESTIONED',
-              'CONTRADICTED',
-              'INSUFFICIENT_EVIDENCE',
-            ]),
-            supportingEvidenceIds: z.array(z.string().min(1)).max(4),
-            opposingEvidenceIds: z.array(z.string().min(1)).max(4),
-            contextEvidenceIds: z.array(z.string().min(1)).max(4),
-            relevantArgumentPointIds: z.array(z.string().min(1)).min(1).max(4),
-            finding: z.string().min(1).max(500).regex(StressFindingPrefix),
-            unknowns: z.array(z.string().min(1).max(300)).min(1).max(3),
-          })
-          .strict()
-      )
+      .array(AssumptionAssessmentItemSchema)
       .min(1)
       .max(6),
+  })
+  .strict();
+
+export const StressResearchDraftOutputSchema = z
+  .object({
     scenarios: z
       .array(
         z
@@ -271,8 +362,7 @@ export const StressTestDraftOutputSchema = z
           })
           .strict()
       )
-      .min(2)
-      .max(3),
+      .length(2),
     invalidationConditions: z
       .array(
         z
@@ -294,29 +384,31 @@ export const StressTestDraftOutputSchema = z
   })
   .strict();
 
-export function createStressTestDraftJsonSchema(input: {
-  evidenceIds: string[];
-  assumptionIds: string[];
-  argumentPointIds: string[];
-}): Record<string, unknown> {
-  const nonNumericString = (maxLength: number) => ({
-    type: 'string',
-    minLength: 1,
-    maxLength,
-    pattern: NonNumericTextPattern,
-  });
-  const idArray = (ids: string[], minItems = 0, maxItems = 4) => ({
+function idArray(ids: string[], minItems = 0, maxItems = 4) {
+  return {
     type: 'array',
     minItems,
     maxItems,
     uniqueItems: true,
     items: { type: 'string', enum: ids },
-  });
+  };
+}
 
+export function createAssumptionAssessmentJsonSchema(input: {
+  evidenceIds: string[];
+  contradictingEvidenceIds: string[];
+  assumptionIds: string[];
+}): Record<string, unknown> {
+  const allowedStatuses = [
+    'SUPPORTED',
+    'QUESTIONED',
+    ...(input.contradictingEvidenceIds.length > 0 ? ['CONTRADICTED'] : []),
+    'INSUFFICIENT_EVIDENCE',
+  ];
   return {
     type: 'object',
     additionalProperties: false,
-    required: ['assumptionAssessments', 'scenarios', 'invalidationConditions'],
+    required: ['assumptionAssessments'],
     properties: {
       assumptionAssessments: {
         type: 'array',
@@ -330,44 +422,39 @@ export function createStressTestDraftJsonSchema(input: {
             'status',
             'supportingEvidenceIds',
             'opposingEvidenceIds',
-            'contextEvidenceIds',
-            'relevantArgumentPointIds',
-            'finding',
-            'unknowns',
           ],
           properties: {
             assumptionId: { type: 'string', enum: input.assumptionIds },
-            status: {
-              type: 'string',
-              enum: [
-                'SUPPORTED',
-                'QUESTIONED',
-                'CONTRADICTED',
-                'INSUFFICIENT_EVIDENCE',
-              ],
-            },
+            status: { type: 'string', enum: allowedStatuses },
             supportingEvidenceIds: idArray(input.evidenceIds),
             opposingEvidenceIds: idArray(input.evidenceIds),
-            contextEvidenceIds: idArray(input.evidenceIds),
-            relevantArgumentPointIds: idArray(input.argumentPointIds, 1),
-            finding: {
-              ...nonNumericString(500),
-              pattern:
-                '^(Current evidence suggests|Current evidence may|Available evidence does not establish|A limitation is)\\b[^0-9%$€£¥]*$',
-            },
-            unknowns: {
-              type: 'array',
-              minItems: 1,
-              maxItems: 3,
-              items: nonNumericString(300),
-            },
           },
         },
       },
+    },
+  };
+}
+
+export function createStressResearchJsonSchema(input: {
+  evidenceIds: string[];
+  assumptionIds: string[];
+  argumentPointIds: string[];
+}): Record<string, unknown> {
+  const nonNumericString = (maxLength: number) => ({
+    type: 'string',
+    minLength: 1,
+    maxLength,
+    pattern: NonNumericTextPattern,
+  });
+  return {
+    type: 'object',
+    additionalProperties: false,
+    required: ['scenarios', 'invalidationConditions'],
+    properties: {
       scenarios: {
         type: 'array',
         minItems: 2,
-        maxItems: 3,
+        maxItems: 2,
         items: {
           type: 'object',
           additionalProperties: false,

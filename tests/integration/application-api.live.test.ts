@@ -1,31 +1,131 @@
 import { describe, expect, it } from 'vitest';
+import type { z } from 'zod';
+import { loadEnvConfig } from '@next/env';
 import { DissentBriefV1Schema } from '@/core/contracts/brief';
+import { DissentError } from '@/core/errors/domain-errors';
 import {
   assertArgumentEvidenceGrounding,
-  assertBriefInvariants,
   assertGeneratedBriefInvariants,
 } from '@/core/domain/invariants';
 import {
-  HumanDecisionSuccessResponseV1Schema,
+  ApiFailureResponseV1Schema,
   ResearchSuccessResponseV1Schema,
 } from '@/lib/api/contracts';
-import { POST as recordDecision } from '@/app/api/decisions/route';
-import { POST as runResearch } from '@/app/api/research/route';
+import { DeepSeekResponsesClient } from '@/server/ai/deepseek-responses.client';
+import type {
+  ModelCallMetadata,
+  StructuredModelPort,
+  StructuredModelRequest,
+  StructuredModelResult,
+} from '@/server/ai/structured-model.port';
+import { handleResearchPost } from '@/server/application/research-route';
+import { executeResearchSubmission } from '@/server/application/research.service';
+
+loadEnvConfig(process.cwd());
 
 const runLive = process.env.RUN_APP_API_LIVE === '1';
 
 describe.skipIf(!runLive)('Live application API', () => {
-  it('runs the real pipeline and records a separate anonymous human decision', async () => {
+  it('runs the real pipeline and leaves the human decision unset', async () => {
     const thesis =
       'I think ETH will outperform BTC over the next 48 hours because risk appetite is improving and ETH momentum is strengthening.';
-    const researchResponse = await runResearch(
+    const completedModelCalls: ModelCallMetadata[] = [];
+    const attemptedModelCalls: Array<{
+      operation: string;
+      configuredOutputTokenBudget: number;
+    }> = [];
+    const deepSeek = new DeepSeekResponsesClient();
+    const instrumentedModel: StructuredModelPort = {
+      async generateStructured<TSchema extends z.ZodTypeAny>(
+        request: StructuredModelRequest<TSchema>
+      ): Promise<StructuredModelResult<z.infer<TSchema>>> {
+        attemptedModelCalls.push({
+          operation: request.operation,
+          configuredOutputTokenBudget: request.maxOutputTokens,
+        });
+        const result = await deepSeek.generateStructured(request);
+        completedModelCalls.push({ ...result.metadata, operation: request.operation });
+        return result;
+      },
+    };
+    const apiStartedAt = Date.now();
+    let internalFailure:
+      | {
+          code: string;
+          operation?: unknown;
+          validationCategory?: unknown;
+          invariantCode?: unknown;
+          issuePath?: unknown;
+          argumentStance?: unknown;
+          argumentPointIndex?: unknown;
+          evidenceId?: unknown;
+          evidenceIds?: unknown;
+          assumptionId?: unknown;
+          safeExplanation?: unknown;
+          attempt?: unknown;
+        }
+      | undefined;
+    const researchResponse = await handleResearchPost(
       new Request('http://localhost/api/research', {
         method: 'POST',
         headers: { 'content-type': 'application/json', origin: 'http://localhost' },
         body: JSON.stringify({ thesis }),
-      })
+      }),
+      {
+        enabled: true,
+        execute: async (submission) => {
+          try {
+            return await executeResearchSubmission(submission, {
+              model: instrumentedModel,
+            });
+          } catch (error) {
+            if (error instanceof DissentError) {
+              internalFailure = {
+                code: error.code,
+                operation: error.details?.operation,
+                validationCategory: error.details?.validationCategory,
+                invariantCode: error.details?.invariantCode,
+                issuePath: error.details?.issuePath,
+                argumentStance: error.details?.argumentStance,
+                argumentPointIndex: error.details?.argumentPointIndex,
+                evidenceId: error.details?.evidenceId,
+                evidenceIds: error.details?.evidenceIds,
+                assumptionId: error.details?.assumptionId,
+                safeExplanation: error.details?.safeExplanation,
+                attempt: error.details?.attempt,
+              };
+              console.error(
+                'APPLICATION_API_LIVE_INTERNAL_FAILURE',
+                JSON.stringify(internalFailure)
+              );
+            }
+            throw error;
+          }
+        },
+      }
     );
-    const research = ResearchSuccessResponseV1Schema.parse(await researchResponse.json());
+    const apiWallClockMs = Date.now() - apiStartedAt;
+    const researchPayload: unknown = await researchResponse.json();
+    if (!researchResponse.ok) {
+      const failure = ApiFailureResponseV1Schema.parse(researchPayload);
+      const failureProof = {
+        apiWallClockMs,
+        publicFailure: failure,
+        internalFailure,
+        attemptedModelCalls,
+        completedModelCalls,
+        recoveryInvoked:
+          attemptedModelCalls.length !== completedModelCalls.length ||
+          new Set(attemptedModelCalls.map((call) => call.operation)).size !==
+            attemptedModelCalls.length,
+      };
+      console.error(
+        'APPLICATION_API_LIVE_FAILURE',
+        JSON.stringify(failureProof)
+      );
+      throw new Error(`Application research failed: ${JSON.stringify(failureProof)}`);
+    }
+    const research = ResearchSuccessResponseV1Schema.parse(researchPayload);
 
     expect(researchResponse.status).toBe(200);
     expect(research.brief.originalThesis).toBe(thesis);
@@ -47,34 +147,17 @@ describe.skipIf(!runLive)('Live application API', () => {
     expect(() =>
       assertArgumentEvidenceGrounding(research.advocateCase, research.brief.evidenceLedger)
     ).not.toThrow();
-
-    const decisionResponse = await recordDecision(
-      new Request('http://localhost/api/decisions', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json', origin: 'http://localhost' },
-        body: JSON.stringify({
-          runId: research.runId,
-          thesisId: research.brief.structuredThesis.id,
-          decision: 'WATCH',
-          notes: 'Awaiting broader evidence.',
-          clientSessionId: 'live-api-smoke',
-          confirmedByUser: true,
-        }),
-      })
+    expect(completedModelCalls).toHaveLength(6);
+    expect(completedModelCalls.map((call) => call.operation).sort()).toEqual(
+      [
+        'structureThesis',
+        'buildAdvocateCase',
+        'buildDissentCase',
+        'assessAssumptions',
+        'generateStressResearch',
+        'synthesizeBrief',
+      ].sort()
     );
-    const decision = HumanDecisionSuccessResponseV1Schema.parse(
-      await decisionResponse.json()
-    );
-    expect(decisionResponse.status).toBe(200);
-    expect(decision.decision.attribution.metadata).toMatchObject({
-      identityVerified: false,
-      triggersTradeExecution: false,
-    });
-    const locallyPersistedBrief = DissentBriefV1Schema.parse({
-      ...research.brief,
-      humanDecision: decision.decision,
-    });
-    expect(() => assertBriefInvariants(locallyPersistedBrief)).not.toThrow();
 
     console.log(
       'APPLICATION_API_LIVE_PROOF',
@@ -91,12 +174,21 @@ describe.skipIf(!runLive)('Live application API', () => {
           invalidationCount: research.brief.invalidationConditions.length,
           researchGaps: research.brief.unknowns,
           initialHumanDecision: research.brief.humanDecision,
-          recordedDecision: decision.decision.decision,
-          identityVerified: decision.decision.attribution.metadata?.identityVerified,
-          triggersTradeExecution:
-            decision.decision.attribution.metadata?.triggersTradeExecution,
           persistence: research.persistence,
           timingsMs: research.timingsMs,
+          apiWallClockMs,
+          actualModels: [...new Set(completedModelCalls.map((call) => call.model))],
+          modelCalls: completedModelCalls.map((call) => ({
+            operation: call.operation,
+            model: call.model,
+            latencyMs: call.latencyMs,
+            usage: call.usage,
+          })),
+          attemptedModelCalls,
+          recoveryInvoked:
+            attemptedModelCalls.length !== completedModelCalls.length ||
+            new Set(attemptedModelCalls.map((call) => call.operation)).size !==
+              attemptedModelCalls.length,
           validationPassed: true,
         },
         null,

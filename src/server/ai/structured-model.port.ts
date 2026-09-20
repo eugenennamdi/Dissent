@@ -2,6 +2,7 @@ import type { z } from 'zod';
 
 export interface StructuredModelRequest<TSchema extends z.ZodTypeAny> {
   operation: string;
+  attempt?: 1 | 2;
   schemaName: string;
   schema: TSchema;
   jsonSchema: Record<string, unknown>;
@@ -13,7 +14,10 @@ export interface StructuredModelRequest<TSchema extends z.ZodTypeAny> {
 
 export interface ModelCallMetadata {
   operation?: string;
+  attempt?: 1 | 2;
+  recoveryKind?: 'TRUNCATION' | 'STRUCTURAL';
   provider: 'DeepSeek';
+  requestedModel?: string;
   model: string;
   latencyMs: number;
   requestId?: string;

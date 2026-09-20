@@ -2,6 +2,7 @@ import type { AssumptionV1 } from '@/core/contracts/assumption';
 import type { ArgumentStanceV1, ArgumentV1 } from '@/core/contracts/argument';
 import type { EvidenceLedgerV1, EvidenceV1 } from '@/core/contracts/evidence';
 import type { StructuredThesisV1, ThesisInputV1 } from '@/core/contracts/thesis';
+import { DissentError } from '@/core/errors/domain-errors';
 import type {
   StructuredModelPort,
   StructuredModelRequest,
@@ -65,10 +66,28 @@ export class QueueModel implements StructuredModelPort {
     this.requests.push(request);
     const queued = this.outputs.shift();
     const output = typeof queued === 'function' ? queued(request) : queued;
+    const parsed = request.schema.safeParse(output);
+    if (!parsed.success) {
+      throw DissentError.modelOutputInvalid(
+        request.operation,
+        'Structured output did not match its application schema.',
+        {
+          validationCategory: 'APPLICATION_SCHEMA_VALIDATION',
+          issues: parsed.error.issues.map((issue) => ({
+            code: issue.code,
+            path: issue.path.map(String).join('.'),
+            ...(issue.code === 'invalid_type'
+              ? { expected: issue.expected, received: issue.received }
+              : {}),
+          })),
+        }
+      );
+    }
     return {
-      data: request.schema.parse(output),
+      data: parsed.data,
       metadata: {
         provider: 'DeepSeek',
+        requestedModel: 'test-model',
         model: 'test-model',
         latencyMs: 12,
         configuredOutputTokenBudget: request.maxOutputTokens,
@@ -219,20 +238,21 @@ export function makeArgument(
 }
 
 export function argumentDraft(
-  interpretation = 'This suggests relative momentum may favor the thesis'
+  qualitativeRationale = 'The selected observation is consistent with the thesis while remaining inconclusive'
 ) {
   return {
-    summaryInterpretation: 'Available market evidence may support the thesis while remaining limited',
+    summaryRationale: 'Available market evidence may support the thesis while remaining limited',
     points: [
       {
-        title: 'Relative momentum evidence',
-        interpretation,
-        evidenceIds: ['ev_return'],
+        pointKind: 'EVIDENCE_INTERPRETATION',
+        title: 'Observed price action',
+        evidenceClaimIds: ['ev_return'],
         targetAssumptionIds: ['asm_1'],
+        relation: 'SUPPORTS',
+        qualitativeRationale,
         weight: 'PRIMARY',
       },
     ],
-    counterweights: ['The evidence may not persist across the full thesis horizon'],
   } as const;
 }
 
@@ -252,20 +272,12 @@ export function stressDraft(input: {
             status: 'SUPPORTED',
             supportingEvidenceIds: [evidenceIds[0]],
             opposingEvidenceIds: [],
-            contextEvidenceIds: [],
-            relevantArgumentPointIds: [argumentPointIds[0]],
-            finding: 'Current evidence suggests observed relative strength is consistent with the assumption',
-            unknowns: ['Forward persistence remains unknown'],
           }
         : {
             assumptionId,
             status: 'INSUFFICIENT_EVIDENCE',
             supportingEvidenceIds: [],
             opposingEvidenceIds: [],
-            contextEvidenceIds: [evidenceIds[1] ?? evidenceIds[0]],
-            relevantArgumentPointIds: [argumentPointIds[1] ?? argumentPointIds[0]],
-            finding: 'Available evidence does not establish the broader regime assumption',
-            unknowns: ['Broader risk appetite is not measured by the supplied ledger'],
           }
     ),
     scenarios: [
@@ -315,13 +327,54 @@ export function stressDraft(input: {
   };
 }
 
-export function stressDraftFromRequest(request: StructuredModelRequest<z.ZodTypeAny>) {
+export function assumptionAssessmentDraft(input: {
+  assumptionIds?: string[];
+  evidenceIds?: string[];
+} = {}) {
+  const draft = stressDraft(input);
+  return { assumptionAssessments: draft.assumptionAssessments };
+}
+
+export function stressResearchDraft(input: {
+  assumptionIds?: string[];
+  argumentPointIds?: string[];
+  evidenceIds?: string[];
+} = {}) {
+  const draft = stressDraft(input);
+  return {
+    scenarios: draft.scenarios,
+    invalidationConditions: draft.invalidationConditions,
+  };
+}
+
+export function stressOutputs(input: {
+  assumptionIds?: string[];
+  argumentPointIds?: string[];
+  evidenceIds?: string[];
+} = {}) {
+  return [assumptionAssessmentDraft(input), stressResearchDraft(input)];
+}
+
+export function assumptionAssessmentDraftFromRequest(
+  request: StructuredModelRequest<z.ZodTypeAny>
+) {
   const assumptions = request.userPayload.assumptions as Array<{ id: string }>;
+  const evidence = request.userPayload.evidenceCatalog as Array<{ id: string }>;
+  return assumptionAssessmentDraft({
+    assumptionIds: assumptions.map((item) => item.id),
+    evidenceIds: evidence.map((item) => item.id),
+  });
+}
+
+export function stressResearchDraftFromRequest(
+  request: StructuredModelRequest<z.ZodTypeAny>
+) {
+  const assumptions = request.userPayload.testedAssumptions as Array<{ id: string }>;
   const argumentsValue = request.userPayload.arguments as Array<{
     points: Array<{ id: string }>;
   }>;
   const evidence = request.userPayload.evidenceCatalog as Array<{ id: string }>;
-  return stressDraft({
+  return stressResearchDraft({
     assumptionIds: assumptions.map((item) => item.id),
     argumentPointIds: argumentsValue.flatMap((item) => item.points.map((point) => point.id)),
     evidenceIds: evidence.map((item) => item.id),
