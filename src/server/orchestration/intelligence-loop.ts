@@ -15,6 +15,7 @@ import {
 } from '@/core/domain/invariants';
 import { DissentError } from '@/core/errors/domain-errors';
 import type { AiDeskPort } from '@/server/ai/ai-analyst.port';
+import { assertAdvocateDissenterDistinct } from '@/server/ai/argument-validation';
 import type { ModelCallMetadata } from '@/server/ai/structured-model.port';
 import type { MarketDeskPort, MarketObservationQuery } from '@/server/market/market-desk.port';
 
@@ -107,71 +108,11 @@ export class IntelligenceLoop {
         'Argument stances did not match their fixed server-owned roles.'
       );
     }
-    const comparableArgument = (argument: ArgumentV1) => ({
-      summary: argument.summary,
-      points: argument.points.map((point) => ({
-        title: point.title,
-        reasoning: point.reasoning,
-        evidenceIds: point.evidenceIds,
-        targetAssumptionIds: point.targetAssumptionIds,
-        weight: point.weight,
-      })),
-      counterweights: argument.risksOrCounterweightsConsidered,
-    });
-    if (
-      JSON.stringify(comparableArgument(advocateCase)) ===
-      JSON.stringify(comparableArgument(dissentCase))
-    ) {
-      const argumentCalls = (this.ai.getModelCallRecords?.() ?? []).filter(
-        (call) =>
-          call.operation === 'buildAdvocateCase' || call.operation === 'buildDissentCase'
-      );
-      const actualModels = [...new Set(argumentCalls.map((call) => call.model))];
-      const requestedModels = [
-        ...new Set(
-          argumentCalls.flatMap((call) =>
-            call.requestedModel ? [call.requestedModel] : []
-          )
-        ),
-      ];
-      const error = DissentError.modelOutputInvalid(
-        'argumentation',
-        'Advocate and Dissenter returned materially identical cases.',
-        {
-          validationCategory: 'CROSS_ARGUMENT_VALIDATION',
-          invariantCode: 'ADVOCATE_DISSENTER_MUST_BE_MATERIALLY_DISTINCT',
-          issuePath: 'arguments',
-          issues: [
-            {
-              code: 'ADVOCATE_DISSENTER_MUST_BE_MATERIALLY_DISTINCT',
-              path: 'arguments',
-            },
-          ],
-          argumentStance: 'CROSS_ARGUMENT',
-          safeExplanation:
-            'Advocate and Dissenter must provide materially distinct interpretations.',
-          attempt: Math.max(...argumentCalls.map((call) => call.attempt ?? 1), 1),
-        }
-      );
-      console.warn('DISSENT_AI_ARGUMENT_INVALID', {
-        provider: 'DeepSeek',
-        operation: 'argumentation',
-        requestedModel: requestedModels.length === 1 ? requestedModels[0] : undefined,
-        actualModel: actualModels.length === 1 ? actualModels[0] : undefined,
-        validationCategory: error.details?.validationCategory,
-        invariantCode: error.details?.invariantCode,
-        issuePath: error.details?.issuePath,
-        argumentStance: error.details?.argumentStance,
-        argumentPointIndex: undefined,
-        evidenceId: undefined,
-        assumptionId: undefined,
-        safeExplanation: error.details?.safeExplanation,
-        issues: error.details?.issues,
-        attempt: error.details?.attempt,
-        requestId: undefined,
-      });
-      throw error;
-    }
+    assertAdvocateDissenterDistinct(
+      advocateCase,
+      dissentCase,
+      this.ai.getModelCallRecords?.() ?? []
+    );
     assertArgumentEvidenceGrounding(advocateCase, research.ledger);
     assertArgumentEvidenceGrounding(dissentCase, research.ledger);
 

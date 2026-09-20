@@ -20,6 +20,10 @@ import type {
 } from '@/server/ai/structured-model.port';
 import { handleResearchPost } from '@/server/application/research-route';
 import { executeResearchSubmission } from '@/server/application/research.service';
+import {
+  wasRecoveryInvoked,
+  type AttemptedModelCall,
+} from './live-test-telemetry';
 
 loadEnvConfig(process.cwd());
 
@@ -30,10 +34,7 @@ describe.skipIf(!runLive)('Live application API', () => {
     const thesis =
       'I think ETH will outperform BTC over the next 48 hours because risk appetite is improving and ETH momentum is strengthening.';
     const completedModelCalls: ModelCallMetadata[] = [];
-    const attemptedModelCalls: Array<{
-      operation: string;
-      configuredOutputTokenBudget: number;
-    }> = [];
+    const attemptedModelCalls: AttemptedModelCall[] = [];
     const deepSeek = new DeepSeekResponsesClient();
     const instrumentedModel: StructuredModelPort = {
       async generateStructured<TSchema extends z.ZodTypeAny>(
@@ -41,10 +42,15 @@ describe.skipIf(!runLive)('Live application API', () => {
       ): Promise<StructuredModelResult<z.infer<TSchema>>> {
         attemptedModelCalls.push({
           operation: request.operation,
+          attempt: request.attempt ?? 1,
           configuredOutputTokenBudget: request.maxOutputTokens,
         });
         const result = await deepSeek.generateStructured(request);
-        completedModelCalls.push({ ...result.metadata, operation: request.operation });
+        completedModelCalls.push({
+          ...result.metadata,
+          operation: request.operation,
+          attempt: request.attempt ?? 1,
+        });
         return result;
       },
     };
@@ -114,10 +120,10 @@ describe.skipIf(!runLive)('Live application API', () => {
         internalFailure,
         attemptedModelCalls,
         completedModelCalls,
-        recoveryInvoked:
-          attemptedModelCalls.length !== completedModelCalls.length ||
-          new Set(attemptedModelCalls.map((call) => call.operation)).size !==
-            attemptedModelCalls.length,
+        recoveryInvoked: wasRecoveryInvoked(
+          attemptedModelCalls,
+          completedModelCalls
+        ),
       };
       console.error(
         'APPLICATION_API_LIVE_FAILURE',
@@ -185,10 +191,10 @@ describe.skipIf(!runLive)('Live application API', () => {
             usage: call.usage,
           })),
           attemptedModelCalls,
-          recoveryInvoked:
-            attemptedModelCalls.length !== completedModelCalls.length ||
-            new Set(attemptedModelCalls.map((call) => call.operation)).size !==
-              attemptedModelCalls.length,
+          recoveryInvoked: wasRecoveryInvoked(
+            attemptedModelCalls,
+            completedModelCalls
+          ),
           validationPassed: true,
         },
         null,
