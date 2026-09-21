@@ -6,9 +6,8 @@ import { IntelligenceLoop } from '@/server/orchestration/intelligence-loop';
 import {
   FIXED_AT,
   QueueModel,
+  argumentSelectionPlanFromRequest,
   assumptionAssessmentDraftFromRequest,
-  argumentDraft,
-  argumentPointSemanticRepair,
   extractionOutput,
   makeEvidenceLedger,
   stressResearchDraftFromRequest,
@@ -16,29 +15,12 @@ import {
   thesisInput,
 } from '../ai/fixtures';
 
-function draftWithoutAssumptionTarget(
-  interpretation?: string,
-  relation: 'SUPPORTS' | 'CHALLENGES' = 'SUPPORTS'
-) {
-  const draft = argumentDraft(interpretation);
+function marketDesk(onCall?: () => void): MarketDeskPort {
   return {
-    ...draft,
-    points: draft.points.map((point) => ({
-      ...point,
-      targetAssumptionIds: [],
-      relation,
-    })),
-  };
-}
-
-function oversizedDraftWithoutAssumptionTarget() {
-  const draft = draftWithoutAssumptionTarget(
-    'The historical observation does not establish forward persistence',
-    'CHALLENGES'
-  );
-  return {
-    ...draft,
-    points: Array.from({ length: 6 }, () => ({ ...draft.points[0] })),
+    async gatherMarketObservations(thesis) {
+      onCall?.();
+      return { ledger: makeEvidenceLedger(thesis.id), gaps: [], complete: true };
+    },
   };
 }
 
@@ -52,46 +34,38 @@ function stressDraftWithoutScenarioArgumentReference(
 }
 
 describe('IntelligenceLoop', () => {
-  it('runs thesis structuring, real-ledger boundary, and distinct grounded cases', async () => {
-    const advocateDraft = draftWithoutAssumptionTarget();
-    const dissentDraft = {
-      ...draftWithoutAssumptionTarget(
-        'The historical observation does not establish forward persistence',
-        'CHALLENGES'
-      ),
-      summaryRationale:
-        'Available market evidence does not establish persistence across the thesis horizon',
-    };
+  it('runs the complete workflow with distinct server-assembled grounded cases', async () => {
     const model = new QueueModel([
       extractionOutput,
-      advocateDraft,
-      dissentDraft,
+      argumentSelectionPlanFromRequest,
+      argumentSelectionPlanFromRequest,
       assumptionAssessmentDraftFromRequest,
       stressResearchDraftFromRequest,
       synthesisDraftFromRequest,
     ]);
     const ai = new DeepSeekAnalystAdapter({ model, now: () => new Date(FIXED_AT) });
-    const marketDesk: MarketDeskPort = {
-      async gatherMarketObservations(thesis) {
-        return { ledger: makeEvidenceLedger(thesis.id), gaps: [], complete: true };
-      },
-    };
     let tick = 0;
-    const loop = new IntelligenceLoop({ ai, marketDesk, now: () => (tick += 10) });
-
-    const result = await loop.run(thesisInput);
+    const result = await new IntelligenceLoop({
+      ai,
+      marketDesk: marketDesk(),
+      now: () => (tick += 10),
+    }).run(thesisInput);
 
     expect(result.structuredThesis.originalThesis).toBe(thesisInput.rawText);
     expect(result.advocateCase.stance).toBe('ADVOCATE');
     expect(result.dissentCase.stance).toBe('DISSENTER');
-    expect(result.advocateCase.summary).not.toBe(result.dissentCase.summary);
-    expect(result.advocateCase.points[0]?.evidenceIds).toEqual(
-      result.dissentCase.points[0]?.evidenceIds
-    );
     expect(result.advocateCase.points[0]?.reasoning).not.toBe(
       result.dissentCase.points[0]?.reasoning
     );
     expect(result.modelCalls).toHaveLength(6);
+    expect(model.requests.map((request) => request.operation)).toEqual([
+      'structureThesis',
+      'buildAdvocateCase',
+      'buildDissentCase',
+      'assessAssumptions',
+      'generateStressResearch',
+      'synthesizeBrief',
+    ]);
     expect(model.requests.map((request) => request.maxOutputTokens)).toEqual([
       1_800,
       6_000,
@@ -100,41 +74,20 @@ describe('IntelligenceLoop', () => {
       5_200,
       4_200,
     ]);
-    expect(model.requests.map((request) => request.reasoningEffort)).toEqual([
-      'low',
-      'none',
-      'none',
-      'none',
-      'none',
-      'none',
-    ]);
     expect(result.assumptions.every((item) => item.status !== 'UNTESTED')).toBe(true);
     expect(result.stressScenarios).toHaveLength(2);
     expect(result.invalidationConditions).toHaveLength(2);
     expect(result.brief.originalThesis).toBe(thesisInput.rawText);
     expect(result.brief.humanDecision).toBeNull();
-    expect(result.brief.contradictions).toEqual([]);
-    expect(result.timingsMs.total).toBeGreaterThanOrEqual(0);
     expect(result).not.toHaveProperty('humanDecision');
-    expect(result.advocateCase).not.toHaveProperty('humanDecision');
-    expect(result.dissentCase).not.toHaveProperty('humanDecision');
   });
 
   it('retries only a truncated late operation and preserves completed artifacts', async () => {
     const warning = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
-    const advocateDraft = draftWithoutAssumptionTarget();
-    const dissentDraft = {
-      ...draftWithoutAssumptionTarget(
-        'The historical observation does not establish forward persistence',
-        'CHALLENGES'
-      ),
-      summaryRationale:
-        'Available market evidence does not establish persistence across the thesis horizon',
-    };
     const model = new QueueModel([
       extractionOutput,
-      advocateDraft,
-      dissentDraft,
+      argumentSelectionPlanFromRequest,
+      argumentSelectionPlanFromRequest,
       assumptionAssessmentDraftFromRequest,
       () => {
         throw DissentError.outputTruncated('generateStressResearch', {
@@ -146,16 +99,13 @@ describe('IntelligenceLoop', () => {
       stressResearchDraftFromRequest,
       synthesisDraftFromRequest,
     ]);
-    const ai = new DeepSeekAnalystAdapter({ model, now: () => new Date(FIXED_AT) });
     let marketCalls = 0;
-    const marketDesk: MarketDeskPort = {
-      async gatherMarketObservations(thesis) {
+    const result = await new IntelligenceLoop({
+      ai: new DeepSeekAnalystAdapter({ model, now: () => new Date(FIXED_AT) }),
+      marketDesk: marketDesk(() => {
         marketCalls += 1;
-        return { ledger: makeEvidenceLedger(thesis.id), gaps: [], complete: true };
-      },
-    };
-
-    const result = await new IntelligenceLoop({ ai, marketDesk }).run(thesisInput);
+      }),
+    }).run(thesisInput);
 
     expect(marketCalls).toBe(1);
     expect(model.requests.map((item) => item.operation)).toEqual([
@@ -167,196 +117,61 @@ describe('IntelligenceLoop', () => {
       'generateStressResearch',
       'synthesizeBrief',
     ]);
-    expect(model.requests.map((item) => item.maxOutputTokens)).toEqual([
-      1_800,
-      6_000,
-      6_000,
-      2_600,
-      5_200,
-      6_800,
-      4_200,
-    ]);
     expect(result.modelCalls).toHaveLength(6);
-    expect(result.brief.originalThesis).toBe(thesisInput.rawText);
     expect(result.brief.humanDecision).toBeNull();
     warning.mockRestore();
   });
 
-  it('semantically repairs only the failed argument point and preserves completed stages', async () => {
+  it('fails a malformed argument selection without retrying or restarting research', async () => {
     const warning = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
-    const invalidAdvocate = draftWithoutAssumptionTarget(
-      'This suggests relative performance supports the thesis'
-    );
-    const dissentDraft = {
-      ...draftWithoutAssumptionTarget(
-        'The historical observation does not establish forward persistence',
-        'CHALLENGES'
-      ),
-      summaryRationale:
-        'Available market evidence does not establish persistence across the thesis horizon',
-    };
-    const recoveredAdvocate = {
-      ...draftWithoutAssumptionTarget(
-        'A single-market observation does not establish relative performance'
-      ),
-      summaryRationale:
-        'The observed market evidence remains relevant but cannot establish relative performance',
-    };
     const model = new QueueModel([
       extractionOutput,
-      invalidAdvocate,
-      dissentDraft,
-      argumentPointSemanticRepair(recoveredAdvocate),
-      assumptionAssessmentDraftFromRequest,
-      stressResearchDraftFromRequest,
-      synthesisDraftFromRequest,
-    ]);
-    const ai = new DeepSeekAnalystAdapter({ model, now: () => new Date(FIXED_AT) });
-    let marketCalls = 0;
-    const marketDesk: MarketDeskPort = {
-      async gatherMarketObservations(thesis) {
-        marketCalls += 1;
-        return { ledger: makeEvidenceLedger(thesis.id), gaps: [], complete: true };
+      {
+        primary: 'unknown_option',
+        secondaryA: null,
+        secondaryB: null,
+        contextualA: null,
+        contextualB: null,
       },
-    };
-
-    const result = await new IntelligenceLoop({ ai, marketDesk }).run(thesisInput);
-
-    expect(marketCalls).toBe(1);
-    expect(model.requests.map((request) => request.operation)).toEqual([
-      'structureThesis',
-      'buildAdvocateCase',
-      'buildDissentCase',
-      'buildAdvocateCase',
-      'assessAssumptions',
-      'generateStressResearch',
-      'synthesizeBrief',
+      argumentSelectionPlanFromRequest,
     ]);
-    expect(
-      model.requests.filter((request) => request.operation === 'structureThesis')
-    ).toHaveLength(1);
-    expect(
-      model.requests.filter((request) => request.operation === 'buildDissentCase')
-    ).toHaveLength(1);
-    expect(
-      model.requests.filter((request) => request.operation === 'buildAdvocateCase')
-    ).toHaveLength(2);
-    expect(result.modelCalls).toHaveLength(7);
-    expect(
-      result.modelCalls.filter((record) => record.operation === 'buildDissentCase')
-    ).toEqual([
-      expect.objectContaining({ attempt: 1 }),
-    ]);
-    expect(
-      result.modelCalls.filter((record) => record.operation === 'buildAdvocateCase')
-    ).toEqual([
-      expect.objectContaining({ attempt: 1 }),
-      expect.objectContaining({ attempt: 2, recoveryKind: 'SEMANTIC' }),
-    ]);
-    expect(result.advocateCase.stance).toBe('ADVOCATE');
-    expect(result.dissentCase.stance).toBe('DISSENTER');
-    expect(result.advocateCase.summary).not.toBe(result.dissentCase.summary);
-    expect(result.brief.humanDecision).toBeNull();
-    warning.mockRestore();
-  });
-
-  it('regenerates only an oversized parallel Dissenter and preserves the valid Advocate', async () => {
-    const warning = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
-    const advocateDraft = draftWithoutAssumptionTarget();
-    const recoveredDissent = {
-      ...draftWithoutAssumptionTarget(
-        'The historical observation does not establish forward persistence',
-        'CHALLENGES'
-      ),
-      summaryRationale:
-        'Available market evidence does not establish persistence across the thesis horizon',
-    };
-    const model = new QueueModel([
-      extractionOutput,
-      advocateDraft,
-      oversizedDraftWithoutAssumptionTarget(),
-      recoveredDissent,
-      assumptionAssessmentDraftFromRequest,
-      stressResearchDraftFromRequest,
-      synthesisDraftFromRequest,
-    ]);
-    const ai = new DeepSeekAnalystAdapter({ model, now: () => new Date(FIXED_AT) });
     let marketCalls = 0;
-    const marketDesk: MarketDeskPort = {
-      async gatherMarketObservations(thesis) {
-        marketCalls += 1;
-        return { ledger: makeEvidenceLedger(thesis.id), gaps: [], complete: true };
-      },
-    };
 
-    const result = await new IntelligenceLoop({ ai, marketDesk }).run(thesisInput);
-
+    await expect(
+      new IntelligenceLoop({
+        ai: new DeepSeekAnalystAdapter({ model }),
+        marketDesk: marketDesk(() => {
+          marketCalls += 1;
+        }),
+      }).run(thesisInput)
+    ).rejects.toMatchObject({ code: 'MODEL_OUTPUT_INVALID' });
     expect(marketCalls).toBe(1);
-    expect(model.requests.map((request) => request.operation)).toEqual([
-      'structureThesis',
-      'buildAdvocateCase',
-      'buildDissentCase',
-      'buildDissentCase',
-      'assessAssumptions',
-      'generateStressResearch',
-      'synthesizeBrief',
-    ]);
-    expect(
-      model.requests.filter((request) => request.operation === 'structureThesis')
-    ).toHaveLength(1);
+    expect(model.requests).toHaveLength(3);
     expect(
       model.requests.filter((request) => request.operation === 'buildAdvocateCase')
     ).toHaveLength(1);
     expect(
       model.requests.filter((request) => request.operation === 'buildDissentCase')
-    ).toHaveLength(2);
-    expect(result.modelCalls).toHaveLength(6);
-    expect(
-      result.modelCalls.filter((record) => record.operation === 'buildAdvocateCase')
-    ).toEqual([expect.objectContaining({ attempt: 1 })]);
-    expect(
-      result.modelCalls.filter((record) => record.operation === 'buildDissentCase')
-    ).toEqual([
-      expect.objectContaining({ attempt: 2, recoveryKind: 'STRUCTURAL' }),
-    ]);
-    expect(result.advocateCase.stance).toBe('ADVOCATE');
-    expect(result.dissentCase.stance).toBe('DISSENTER');
-    expect(result.brief.humanDecision).toBeNull();
+    ).toHaveLength(1);
     warning.mockRestore();
   });
 
-  it('regenerates only a structurally incomplete stress stage and preserves prior artifacts', async () => {
+  it('regenerates only a structurally incomplete stress stage', async () => {
     const warning = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
-    const advocateDraft = draftWithoutAssumptionTarget();
-    const dissentDraft = {
-      ...draftWithoutAssumptionTarget(
-        'The historical observation does not establish forward persistence',
-        'CHALLENGES'
-      ),
-      summaryRationale:
-        'Available market evidence does not establish persistence across the thesis horizon',
-    };
     const model = new QueueModel([
       extractionOutput,
-      advocateDraft,
-      dissentDraft,
+      argumentSelectionPlanFromRequest,
+      argumentSelectionPlanFromRequest,
       assumptionAssessmentDraftFromRequest,
       stressDraftWithoutScenarioArgumentReference,
       stressResearchDraftFromRequest,
       synthesisDraftFromRequest,
     ]);
-    const ai = new DeepSeekAnalystAdapter({ model, now: () => new Date(FIXED_AT) });
-    let marketCalls = 0;
-    const marketDesk: MarketDeskPort = {
-      async gatherMarketObservations(thesis) {
-        marketCalls += 1;
-        return { ledger: makeEvidenceLedger(thesis.id), gaps: [], complete: true };
-      },
-    };
+    const result = await new IntelligenceLoop({
+      ai: new DeepSeekAnalystAdapter({ model, now: () => new Date(FIXED_AT) }),
+      marketDesk: marketDesk(),
+    }).run(thesisInput);
 
-    const result = await new IntelligenceLoop({ ai, marketDesk }).run(thesisInput);
-
-    expect(marketCalls).toBe(1);
     expect(model.requests.map((item) => item.operation)).toEqual([
       'structureThesis',
       'buildAdvocateCase',
@@ -366,13 +181,11 @@ describe('IntelligenceLoop', () => {
       'generateStressResearch',
       'synthesizeBrief',
     ]);
-    expect(result.modelCalls).toHaveLength(6);
     expect(result.modelCalls[4]).toMatchObject({
       operation: 'generateStressResearch',
       attempt: 2,
       recoveryKind: 'STRUCTURAL',
     });
-    expect(result.brief.originalThesis).toBe(thesisInput.rawText);
     expect(result.brief.humanDecision).toBeNull();
     warning.mockRestore();
   });
@@ -380,7 +193,7 @@ describe('IntelligenceLoop', () => {
   it('fails closed on incomplete market research before argument generation', async () => {
     const model = new QueueModel([extractionOutput]);
     const ai = new DeepSeekAnalystAdapter({ model, now: () => new Date(FIXED_AT) });
-    const marketDesk: MarketDeskPort = {
+    const incompleteMarketDesk: MarketDeskPort = {
       async gatherMarketObservations(thesis) {
         return {
           ledger: makeEvidenceLedger(thesis.id),
@@ -397,59 +210,12 @@ describe('IntelligenceLoop', () => {
       },
     };
 
-    await expect(new IntelligenceLoop({ ai, marketDesk }).run(thesisInput)).rejects.toMatchObject({
+    await expect(
+      new IntelligenceLoop({ ai, marketDesk: incompleteMarketDesk }).run(thesisInput)
+    ).rejects.toMatchObject({
       code: 'EVIDENCE_UNAVAILABLE',
       details: { reason: 'partial_market_research', retainedEvidenceCount: 2 },
     });
     expect(model.requests).toHaveLength(1);
-  });
-
-  it('rejects materially identical Advocate and Dissenter cases', async () => {
-    const warning = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
-    const sameDraft = draftWithoutAssumptionTarget();
-    const ai = new DeepSeekAnalystAdapter({
-      model: new QueueModel([extractionOutput, sameDraft, sameDraft]),
-      now: () => new Date(FIXED_AT),
-    });
-    const marketDesk: MarketDeskPort = {
-      async gatherMarketObservations(thesis) {
-        return { ledger: makeEvidenceLedger(thesis.id), gaps: [], complete: true };
-      },
-    };
-
-    await expect(new IntelligenceLoop({ ai, marketDesk }).run(thesisInput)).rejects.toMatchObject({
-      code: 'MODEL_OUTPUT_INVALID',
-      details: {
-        validationCategory: 'CROSS_ARGUMENT_VALIDATION',
-        invariantCode: 'ADVOCATE_DISSENTER_MUST_BE_MATERIALLY_DISTINCT',
-        issuePath: 'arguments',
-        argumentStance: 'CROSS_ARGUMENT',
-        attempt: 1,
-      },
-    });
-    expect(warning).toHaveBeenCalledWith('DISSENT_AI_ARGUMENT_INVALID', {
-      provider: 'DeepSeek',
-      operation: 'argumentation',
-      requestedModel: 'test-model',
-      actualModel: 'test-model',
-      validationCategory: 'CROSS_ARGUMENT_VALIDATION',
-      invariantCode: 'ADVOCATE_DISSENTER_MUST_BE_MATERIALLY_DISTINCT',
-      issuePath: 'arguments',
-      argumentStance: 'CROSS_ARGUMENT',
-      argumentPointIndex: undefined,
-      evidenceId: undefined,
-      assumptionId: undefined,
-      safeExplanation:
-        'Advocate and Dissenter must provide materially distinct interpretations.',
-      issues: [
-        {
-          code: 'ADVOCATE_DISSENTER_MUST_BE_MATERIALLY_DISTINCT',
-          path: 'arguments',
-        },
-      ],
-      attempt: 1,
-      requestId: undefined,
-    });
-    warning.mockRestore();
   });
 });

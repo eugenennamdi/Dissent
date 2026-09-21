@@ -312,6 +312,28 @@ export function argumentPointSemanticRepair(
   };
 }
 
+export function argumentSelectionPlan(optionIds: readonly string[]) {
+  const [primary, secondaryA, secondaryB, contextualA, contextualB] = optionIds;
+  if (!primary) throw new Error('Argument selection requires a primary option ID.');
+  return {
+    primary,
+    secondaryA: secondaryA ?? null,
+    secondaryB: secondaryB ?? null,
+    contextualA: contextualA ?? null,
+    contextualB: contextualB ?? null,
+  };
+}
+
+export function argumentSelectionPlanFromRequest(
+  request: StructuredModelRequest<z.ZodTypeAny>,
+  count = 1
+) {
+  const options = request.userPayload.authorizedArgumentOptions as Array<{
+    optionId: string;
+  }>;
+  return argumentSelectionPlan(options.slice(0, count).map((option) => option.optionId));
+}
+
 export function stressDraft(input: {
   assumptionIds?: string[];
   argumentPointIds?: string[];

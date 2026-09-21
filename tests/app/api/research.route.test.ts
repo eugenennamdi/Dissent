@@ -15,8 +15,8 @@ import type { MarketDeskPort } from '@/server/market/market-desk.port';
 import {
   FIXED_AT,
   QueueModel,
+  argumentSelectionPlanFromRequest,
   assumptionAssessmentDraftFromRequest,
-  argumentDraft,
   extractionOutput,
   makeEvidenceLedger,
   stressResearchDraftFromRequest,
@@ -36,21 +36,6 @@ function request(body: string, headers: Record<string, string> = {}): Request {
   });
 }
 
-function groundedArgumentDraft(
-  interpretation?: string,
-  relation: 'SUPPORTS' | 'CHALLENGES' = 'SUPPORTS'
-) {
-  const draft = argumentDraft(interpretation);
-  return {
-    ...draft,
-    points: draft.points.map((point) => ({
-      ...point,
-      targetAssumptionIds: [],
-      relation,
-    })),
-  };
-}
-
 function marketDesk(): MarketDeskPort {
   return {
     async gatherMarketObservations(thesis) {
@@ -60,19 +45,10 @@ function marketDesk(): MarketDeskPort {
 }
 
 function mockedResearchExecutor() {
-  const advocate = groundedArgumentDraft();
-  const dissent = {
-    ...groundedArgumentDraft(
-      'The historical observation does not establish forward persistence',
-      'CHALLENGES'
-    ),
-    summaryRationale:
-      'Available market evidence does not establish persistence across the thesis horizon',
-  };
   const model = new QueueModel([
     extractionOutput,
-    advocate,
-    dissent,
+    argumentSelectionPlanFromRequest,
+    argumentSelectionPlanFromRequest,
     assumptionAssessmentDraftFromRequest,
     stressResearchDraftFromRequest,
     synthesisDraftFromRequest,

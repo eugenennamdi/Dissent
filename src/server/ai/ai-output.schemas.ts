@@ -339,6 +339,77 @@ export function createArgumentDraftJsonSchema(
   };
 }
 
+export const ARGUMENT_SELECTION_SLOT_NAMES = [
+  'primary',
+  'secondaryA',
+  'secondaryB',
+  'contextualA',
+  'contextualB',
+] as const;
+
+const ArgumentSelectionPlanBaseSchema = z
+  .object({
+    primary: z.string().min(1),
+    secondaryA: z.string().min(1).nullable(),
+    secondaryB: z.string().min(1).nullable(),
+    contextualA: z.string().min(1).nullable(),
+    contextualB: z.string().min(1).nullable(),
+  })
+  .strict();
+
+export type ArgumentSelectionPlan = z.infer<typeof ArgumentSelectionPlanBaseSchema>;
+
+export function createArgumentSelectionPlanOutputSchema(
+  optionIds: readonly string[]
+): z.ZodType<ArgumentSelectionPlan> {
+  const authorizedOptionIds = new Set(optionIds);
+  return ArgumentSelectionPlanBaseSchema.superRefine((plan, context) => {
+    const selectedOptionIds = new Map<string, string>();
+    for (const slot of ARGUMENT_SELECTION_SLOT_NAMES) {
+      const optionId = plan[slot];
+      if (optionId === null) continue;
+      if (!authorizedOptionIds.has(optionId)) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: [slot],
+          message: 'Argument option ID is not present in the authorized role catalog.',
+        });
+      }
+      const firstSlot = selectedOptionIds.get(optionId);
+      if (firstSlot) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: [slot],
+          message: `Argument option ID duplicates the selection in ${firstSlot}.`,
+        });
+      } else {
+        selectedOptionIds.set(optionId, slot);
+      }
+    }
+  });
+}
+
+export function createArgumentSelectionPlanJsonSchema(
+  optionIds: readonly string[]
+): Record<string, unknown> {
+  const nullableOption = {
+    type: ['string', 'null'],
+    enum: [...optionIds, null],
+  };
+  return {
+    type: 'object',
+    additionalProperties: false,
+    required: [...ARGUMENT_SELECTION_SLOT_NAMES],
+    properties: {
+      primary: { type: 'string', enum: [...optionIds] },
+      secondaryA: nullableOption,
+      secondaryB: nullableOption,
+      contextualA: nullableOption,
+      contextualB: nullableOption,
+    },
+  };
+}
+
 const AssumptionAssessmentItemSchema = z
   .object({
     assumptionId: z.string().min(1),

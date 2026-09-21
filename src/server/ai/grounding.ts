@@ -1,18 +1,23 @@
 import { createHash } from 'node:crypto';
 import { ArgumentV1Schema, type ArgumentStanceV1, type ArgumentV1 } from '@/core/contracts/argument';
-import type { AssumptionV1 } from '@/core/contracts/assumption';
+import type { AssumptionCategoryV1, AssumptionV1 } from '@/core/contracts/assumption';
 import {
   deriveEvidenceFreshness,
   type EvidenceLedgerV1,
   type EvidenceNatureV1,
   type EvidenceObservationTypeV1,
+  type EvidenceStanceV1,
   type MarketInstrumentTypeV1,
 } from '@/core/contracts/evidence';
 import type { StructuredThesisV1 } from '@/core/contracts/thesis';
 import { assertArgumentEvidenceGrounding } from '@/core/domain/invariants';
 import { DissentError } from '@/core/errors/domain-errors';
 import type { z } from 'zod';
-import { ArgumentDraftOutputSchema } from './ai-output.schemas';
+import {
+  ARGUMENT_SELECTION_SLOT_NAMES,
+  ArgumentDraftOutputSchema,
+  type ArgumentSelectionPlan,
+} from './ai-output.schemas';
 
 type ArgumentDraft = z.infer<typeof ArgumentDraftOutputSchema>;
 
@@ -458,6 +463,310 @@ export function deriveResearchLimitations(ledger: EvidenceLedgerV1): string[] {
   );
 }
 
+export const ARGUMENT_OPTION_CATALOG_MAX_ITEMS = 12;
+
+export type ArgumentInterpretationKind =
+  | 'RELATIVE_RETURN_OBSERVATION'
+  | 'RETURN_SPREAD_OBSERVATION'
+  | 'SINGLE_MARKET_PRICE_CONTEXT'
+  | 'FUNDING_RATE_CONTEXT'
+  | 'OPEN_INTEREST_CONTEXT'
+  | 'VOLUME_CONTEXT'
+  | 'POINT_IN_TIME_PRICE_CONTEXT'
+  | 'DIRECTIONAL_POSITIONING_NOT_ESTABLISHED'
+  | 'FORWARD_PERSISTENCE_NOT_ESTABLISHED'
+  | 'RESEARCH_LIMITATION';
+
+export interface AuthorizedArgumentPointOption {
+  optionId: string;
+  targetAssumptionId: string;
+  interpretationKind: ArgumentInterpretationKind;
+  allowedStance: ArgumentStanceV1;
+  evidenceClaimIds: string[];
+  relation: 'SUPPORTS' | 'CHALLENGES' | 'CONTEXT_ONLY' | 'LIMITS_CONFIDENCE';
+  title: string;
+  qualitativeInterpretation: string;
+}
+
+const OBSERVATION_ASSUMPTION_PREFERENCES: Record<
+  EvidenceObservationTypeV1,
+  readonly AssumptionCategoryV1[]
+> = {
+  LAST_PRICE: ['MARKET_REGIME', 'OTHER'],
+  PRICE_CHANGE_24H: ['MARKET_REGIME', 'CORRELATION', 'OTHER'],
+  BASE_VOLUME_24H: ['LIQUIDITY', 'MICROSTRUCTURE', 'OTHER'],
+  CANDLE_OPEN: ['MARKET_REGIME', 'OTHER'],
+  CANDLE_CLOSE: ['MARKET_REGIME', 'OTHER'],
+  INTERVAL_PRICE_CHANGE: ['MARKET_REGIME', 'CORRELATION', 'OTHER'],
+  RETURN_SPREAD: ['CORRELATION', 'MARKET_REGIME', 'OTHER'],
+  RELATIVE_RETURN: ['CORRELATION', 'MARKET_REGIME', 'OTHER'],
+  FUNDING_RATE: ['POSITIONING', 'MICROSTRUCTURE', 'OTHER'],
+  OPEN_INTEREST: ['POSITIONING', 'LIQUIDITY', 'OTHER'],
+};
+
+const LIMITATION_ASSUMPTION_PREFERENCES: Record<
+  string,
+  readonly AssumptionCategoryV1[]
+> = {
+  MACRO_RESEARCH: ['MACRO', 'MARKET_REGIME', 'OTHER'],
+  NEWS_RESEARCH: ['CATALYST_TIMING', 'MARKET_REGIME', 'OTHER'],
+  SENTIMENT_RESEARCH: ['MARKET_REGIME', 'OTHER'],
+  DIRECTIONAL_POSITIONING: ['POSITIONING', 'MICROSTRUCTURE', 'OTHER'],
+  DERIVATIVES_POSITIONING: ['POSITIONING', 'MICROSTRUCTURE', 'OTHER'],
+  FORWARD_PERSISTENCE: ['CATALYST_TIMING', 'MARKET_REGIME', 'OTHER'],
+  EVIDENCE_FRESHNESS: ['CATALYST_TIMING', 'MARKET_REGIME', 'OTHER'],
+};
+
+function selectBoundAssumption(
+  assumptions: readonly AssumptionV1[],
+  preferredCategories: readonly AssumptionCategoryV1[],
+  relatedAssumptionIds: readonly string[] = []
+): AssumptionV1 {
+  const relatedIds = new Set(relatedAssumptionIds);
+  const explicitlyRelated = assumptions.find((assumption) => relatedIds.has(assumption.id));
+  if (explicitlyRelated) return explicitlyRelated;
+  for (const category of preferredCategories) {
+    const matching = assumptions.find((assumption) => assumption.category === category);
+    if (matching) return matching;
+  }
+  const fallback = assumptions[0];
+  if (!fallback) {
+    throw DissentError.invalidInput('Argument option construction requires an assumption.');
+  }
+  return fallback;
+}
+
+function observationInterpretation(
+  observationType: EvidenceObservationTypeV1
+): Pick<AuthorizedArgumentPointOption, 'interpretationKind' | 'title'> & {
+  measurementText: string;
+} {
+  switch (observationType) {
+    case 'RELATIVE_RETURN':
+      return {
+        interpretationKind: 'RELATIVE_RETURN_OBSERVATION',
+        title: 'Observed ETH/BTC relative return',
+        measurementText:
+          'The aligned historical ETH/BTC relative return measures relative performance directly while remaining historical evidence.',
+      };
+    case 'RETURN_SPREAD':
+      return {
+        interpretationKind: 'RETURN_SPREAD_OBSERVATION',
+        title: 'Observed ETH and BTC return spread',
+        measurementText:
+          'The aligned historical return spread measures the difference between ETH and BTC returns in percentage points, not the percentage change of the ETH/BTC ratio.',
+      };
+    case 'PRICE_CHANGE_24H':
+    case 'INTERVAL_PRICE_CHANGE':
+      return {
+        interpretationKind: 'SINGLE_MARKET_PRICE_CONTEXT',
+        title: 'Single-market historical price context',
+        measurementText:
+          'The single-market historical price change provides context but does not establish ETH/BTC relative performance or a future outcome.',
+      };
+    case 'FUNDING_RATE':
+      return {
+        interpretationKind: 'FUNDING_RATE_CONTEXT',
+        title: 'Observed funding-rate context',
+        measurementText:
+          'The funding-rate observation provides derivatives context but does not establish directional positioning, institutional participation, crowding, relative performance, or a future outcome.',
+      };
+    case 'OPEN_INTEREST':
+      return {
+        interpretationKind: 'OPEN_INTEREST_CONTEXT',
+        title: 'Observed open-interest context',
+        measurementText:
+          'The open-interest observation provides derivatives context but does not establish directional positioning, institutional participation, crowding, relative performance, or a future outcome.',
+      };
+    case 'BASE_VOLUME_24H':
+      return {
+        interpretationKind: 'VOLUME_CONTEXT',
+        title: 'Observed trading-volume context',
+        measurementText:
+          'The historical volume observation provides market-activity context and does not establish relative performance or a future outcome.',
+      };
+    case 'LAST_PRICE':
+    case 'CANDLE_OPEN':
+    case 'CANDLE_CLOSE':
+      return {
+        interpretationKind: 'POINT_IN_TIME_PRICE_CONTEXT',
+        title: 'Observed market-price context',
+        measurementText:
+          'The observed market price provides bounded context and does not establish price change, relative performance, or a future outcome.',
+      };
+  }
+}
+
+function optionRelation(
+  stance: ArgumentStanceV1,
+  evidenceStance: EvidenceStanceV1,
+  supportsRelativeThesis: boolean
+): AuthorizedArgumentPointOption['relation'] {
+  if (!supportsRelativeThesis) {
+    return stance === 'DISSENTER' ? 'LIMITS_CONFIDENCE' : 'CONTEXT_ONLY';
+  }
+  if (stance === 'ADVOCATE') {
+    return evidenceStance === 'SUPPORTING'
+      ? 'SUPPORTS'
+      : evidenceStance === 'CONTRADICTING'
+        ? 'LIMITS_CONFIDENCE'
+        : 'CONTEXT_ONLY';
+  }
+  return evidenceStance === 'CONTRADICTING'
+    ? 'CHALLENGES'
+    : evidenceStance === 'SUPPORTING'
+      ? 'LIMITS_CONFIDENCE'
+      : 'CONTEXT_ONLY';
+}
+
+function relationInterpretation(
+  measurementText: string,
+  relation: AuthorizedArgumentPointOption['relation']
+): string {
+  switch (relation) {
+    case 'SUPPORTS':
+      return `${measurementText} It is consistent with the selected thesis assumption but does not prove persistence.`;
+    case 'CHALLENGES':
+      return `${measurementText} It creates evidence-bounded tension with the selected thesis assumption without proving the opposite outcome.`;
+    case 'LIMITS_CONFIDENCE':
+      return `${measurementText} Its scope therefore limits confidence in the selected thesis assumption.`;
+    case 'CONTEXT_ONLY':
+      return `${measurementText} It remains contextual rather than independently probative for the selected thesis assumption.`;
+  }
+}
+
+function createAuthorizedOption(input: Omit<AuthorizedArgumentPointOption, 'optionId'> & {
+  thesisId: string;
+}): AuthorizedArgumentPointOption {
+  const { thesisId, ...option } = input;
+  assertSafeModelAuthoredText(
+    input.allowedStance === 'ADVOCATE' ? 'buildAdvocateCase' : 'buildDissentCase',
+    [
+      { field: 'serverOption.title', value: option.title },
+      {
+        field: 'serverOption.qualitativeInterpretation',
+        value: option.qualitativeInterpretation,
+      },
+    ],
+    { argumentStance: input.allowedStance }
+  );
+  if (option.title.length > 120 || option.qualitativeInterpretation.length > 500) {
+    throw DissentError.analysisFailed(
+      'ARGUING',
+      'A server-issued argument option exceeded its bounded prose contract.'
+    );
+  }
+  return {
+    optionId: deterministicId('argopt', { thesisId, ...option }),
+    ...option,
+  };
+}
+
+function catalogRelationPriority(
+  stance: ArgumentStanceV1,
+  relation: AuthorizedArgumentPointOption['relation']
+): number {
+  const priorities =
+    stance === 'ADVOCATE'
+      ? { SUPPORTS: 0, CONTEXT_ONLY: 1, LIMITS_CONFIDENCE: 2, CHALLENGES: 3 }
+      : { CHALLENGES: 0, LIMITS_CONFIDENCE: 1, CONTEXT_ONLY: 2, SUPPORTS: 3 };
+  return priorities[relation];
+}
+
+export function authorizedArgumentPointCatalog(input: {
+  thesis: StructuredThesisV1;
+  ledger: EvidenceLedgerV1;
+  assumptions: AssumptionV1[];
+  stance: ArgumentStanceV1;
+}): AuthorizedArgumentPointOption[] {
+  if (input.assumptions.length === 0) {
+    throw DissentError.invalidInput('Argument option construction requires assumptions.');
+  }
+  const factualClaims = evidenceCatalog(input.ledger);
+  const evidenceById = new Map(input.ledger.items.map((item) => [item.id, item]));
+  const options = factualClaims.map((claim) => {
+    const evidence = evidenceById.get(claim.evidenceId);
+    if (!evidence) {
+      throw DissentError.invalidInput(
+        `Authorized claim ${claim.claimId} has no matching ledger evidence.`
+      );
+    }
+    const semantics = observationInterpretation(claim.observationType);
+    const supportsRelativeThesis =
+      claim.observationType === 'RELATIVE_RETURN' ||
+      claim.observationType === 'RETURN_SPREAD';
+    const relation = optionRelation(input.stance, evidence.stance, supportsRelativeThesis);
+    const targetAssumption = selectBoundAssumption(
+      input.assumptions,
+      OBSERVATION_ASSUMPTION_PREFERENCES[claim.observationType],
+      evidence.relatedAssumptionIds
+    );
+    return createAuthorizedOption({
+      thesisId: input.thesis.id,
+      targetAssumptionId: targetAssumption.id,
+      interpretationKind: semantics.interpretationKind,
+      allowedStance: input.stance,
+      evidenceClaimIds: [claim.claimId],
+      relation,
+      title: semantics.title,
+      qualitativeInterpretation: relationInterpretation(
+        semantics.measurementText,
+        relation
+      ),
+    });
+  });
+
+  if (input.stance === 'DISSENTER') {
+    for (const limitation of authorizedResearchLimitationCatalog(input.ledger)) {
+      if (limitation.relatedEvidenceClaimIds.length === 0) continue;
+      const relatedEvidenceClaimIds = limitation.relatedEvidenceClaimIds.slice(0, 4);
+      const targetAssumption = selectBoundAssumption(
+        input.assumptions,
+        LIMITATION_ASSUMPTION_PREFERENCES[limitation.dimension] ?? ['OTHER']
+      );
+      const interpretationKind: ArgumentInterpretationKind =
+        limitation.dimension === 'DIRECTIONAL_POSITIONING'
+          ? 'DIRECTIONAL_POSITIONING_NOT_ESTABLISHED'
+          : limitation.dimension === 'FORWARD_PERSISTENCE'
+            ? 'FORWARD_PERSISTENCE_NOT_ESTABLISHED'
+            : 'RESEARCH_LIMITATION';
+      const title =
+        limitation.dimension === 'DIRECTIONAL_POSITIONING'
+          ? 'Directional positioning remains unestablished'
+          : limitation.dimension === 'FORWARD_PERSISTENCE'
+            ? 'Forward persistence remains unestablished'
+            : 'Authorized research limitation';
+      options.push(
+        createAuthorizedOption({
+          thesisId: input.thesis.id,
+          targetAssumptionId: targetAssumption.id,
+          interpretationKind,
+          allowedStance: input.stance,
+          evidenceClaimIds: relatedEvidenceClaimIds,
+          relation: 'LIMITS_CONFIDENCE',
+          title,
+          qualitativeInterpretation: limitation.exactWording,
+        })
+      );
+    }
+  }
+
+  return options
+    .sort((left, right) => {
+      const relationDifference =
+        catalogRelationPriority(input.stance, left.relation) -
+        catalogRelationPriority(input.stance, right.relation);
+      if (relationDifference !== 0) return relationDifference;
+      const kindDifference = left.interpretationKind.localeCompare(
+        right.interpretationKind
+      );
+      return kindDifference !== 0
+        ? kindDifference
+        : left.optionId.localeCompare(right.optionId);
+    })
+    .slice(0, ARGUMENT_OPTION_CATALOG_MAX_ITEMS);
+}
+
 function assertSemanticEvidenceMatch(input: {
   operation: string;
   stance: ArgumentStanceV1;
@@ -721,6 +1030,244 @@ export function materializeGroundedArgument(input: {
       ...selectedLimitations.map((item) => item.text),
       ...unselectedLimitations,
     ],
+    createdAt: input.createdAt,
+    schemaVersion: 1,
+  };
+  const parsedArgument = ArgumentV1Schema.safeParse(assembledArgument);
+  if (!parsedArgument.success) {
+    const issues = parsedArgument.error.issues.map((issue) => ({
+      code: issue.code,
+      path: ['argument', ...issue.path.map(String)].join('.'),
+    }));
+    throw DissentError.modelOutputInvalid(
+      input.operation,
+      'The server-assembled argument violated the authoritative ArgumentV1 contract.',
+      {
+        validationCategory: 'ARGUMENT_DOMAIN_CONTRACT_VALIDATION',
+        invariantCode: 'SERVER_ASSEMBLED_ARGUMENT_MUST_SATISFY_ARGUMENT_V1',
+        issuePath: issues[0]?.path ?? 'argument',
+        issues,
+        argumentStance: input.stance,
+        safeExplanation:
+          'The server-assembled argument violated the authoritative argument contract.',
+      }
+    );
+  }
+  const argument = parsedArgument.data;
+  try {
+    assertArgumentEvidenceGrounding(argument, input.ledger);
+  } catch (cause) {
+    throw DissentError.modelOutputInvalid(
+      input.operation,
+      'The server-assembled argument failed evidence-grounding validation.',
+      {
+        validationCategory: 'ARGUMENT_DOMAIN_VALIDATION',
+        invariantCode: 'ARGUMENT_MUST_REFERENCE_LEDGER_EVIDENCE',
+        issuePath: 'argument.points',
+        issues: [
+          { code: 'ARGUMENT_MUST_REFERENCE_LEDGER_EVIDENCE', path: 'argument.points' },
+        ],
+        argumentStance: input.stance,
+        safeExplanation:
+          'The server-assembled argument did not remain grounded in the supplied evidence ledger.',
+        causeCode: cause instanceof DissentError ? cause.code : 'UNKNOWN',
+      }
+    );
+  }
+  return argument;
+}
+
+const ARGUMENT_SLOT_WEIGHTS = {
+  primary: 'PRIMARY',
+  secondaryA: 'SECONDARY',
+  secondaryB: 'SECONDARY',
+  contextualA: 'CONTEXTUAL',
+  contextualB: 'CONTEXTUAL',
+} as const;
+
+function interpretationKindLabel(kind: ArgumentInterpretationKind): string {
+  switch (kind) {
+    case 'RELATIVE_RETURN_OBSERVATION':
+      return 'aligned relative-return evidence';
+    case 'RETURN_SPREAD_OBSERVATION':
+      return 'aligned return-spread evidence';
+    case 'SINGLE_MARKET_PRICE_CONTEXT':
+      return 'single-market price context';
+    case 'FUNDING_RATE_CONTEXT':
+      return 'funding-rate context';
+    case 'OPEN_INTEREST_CONTEXT':
+      return 'open-interest context';
+    case 'VOLUME_CONTEXT':
+      return 'trading-volume context';
+    case 'POINT_IN_TIME_PRICE_CONTEXT':
+      return 'point-in-time price context';
+    case 'DIRECTIONAL_POSITIONING_NOT_ESTABLISHED':
+      return 'the directional-positioning evidence limitation';
+    case 'FORWARD_PERSISTENCE_NOT_ESTABLISHED':
+      return 'the forward-persistence evidence limitation';
+    case 'RESEARCH_LIMITATION':
+      return 'an authorized research limitation';
+  }
+}
+
+export function materializeArgumentSelection(input: {
+  operation: string;
+  stance: ArgumentStanceV1;
+  thesis: StructuredThesisV1;
+  ledger: EvidenceLedgerV1;
+  assumptions: AssumptionV1[];
+  options: AuthorizedArgumentPointOption[];
+  plan: ArgumentSelectionPlan;
+  createdAt: string;
+}): ArgumentV1 {
+  const optionById = new Map(input.options.map((option) => [option.optionId, option]));
+  const evidenceById = new Map(input.ledger.items.map((item) => [item.id, item]));
+  const assumptionById = new Map(
+    input.assumptions.map((assumption) => [assumption.id, assumption])
+  );
+  const selectedOptionIds = new Set<string>();
+  const selected = ARGUMENT_SELECTION_SLOT_NAMES.flatMap((slot) => {
+    const optionId = input.plan[slot];
+    if (optionId === null) return [];
+    if (selectedOptionIds.has(optionId)) {
+      throw argumentViolation({
+        operation: input.operation,
+        stance: input.stance,
+        validationCategory: 'ARGUMENT_SELECTION_VALIDATION',
+        invariantCode: 'ARGUMENT_OPTIONS_MUST_BE_UNIQUE',
+        issuePath: slot,
+        safeExplanation: 'An argument option was selected more than once.',
+      });
+    }
+    selectedOptionIds.add(optionId);
+    const option = optionById.get(optionId);
+    if (!option || option.allowedStance !== input.stance) {
+      throw argumentViolation({
+        operation: input.operation,
+        stance: input.stance,
+        validationCategory: 'ARGUMENT_SELECTION_VALIDATION',
+        invariantCode: 'ARGUMENT_OPTION_UNKNOWN_OR_ROLE_INELIGIBLE',
+        issuePath: slot,
+        safeExplanation:
+          'An argument selection referenced an option outside the authorized role catalog.',
+      });
+    }
+    const assumption = assumptionById.get(option.targetAssumptionId);
+    if (!assumption) {
+      throw argumentViolation({
+        operation: input.operation,
+        stance: input.stance,
+        validationCategory: 'ARGUMENT_SELECTION_VALIDATION',
+        invariantCode: 'ARGUMENT_OPTION_ASSUMPTION_UNKNOWN_REFERENCE',
+        issuePath: slot,
+        safeExplanation:
+          'A server-issued argument option referenced an unknown thesis assumption.',
+        assumptionId: option.targetAssumptionId,
+      });
+    }
+    return [{ slot, option, assumption }];
+  });
+
+  if (selected.length === 0 || input.plan.primary === null) {
+    throw argumentViolation({
+      operation: input.operation,
+      stance: input.stance,
+      validationCategory: 'ARGUMENT_SELECTION_VALIDATION',
+      invariantCode: 'ARGUMENT_REQUIRES_PRIMARY_OPTION',
+      issuePath: 'primary',
+      safeExplanation: 'An argument selection requires one authorized primary option.',
+    });
+  }
+
+  const relationLabels = {
+    SUPPORTS: 'Supportive interpretation, not proof:',
+    CHALLENGES: 'Challenging interpretation, not observed contradiction:',
+    CONTEXT_ONLY: 'Contextual interpretation:',
+    LIMITS_CONFIDENCE: 'Uncertainty interpretation:',
+  } as const;
+
+  const points = selected.map(({ slot, option }, pointIndex) => {
+    const claims = option.evidenceClaimIds.map((evidenceId) => {
+      const evidence = evidenceById.get(evidenceId);
+      if (!evidence) {
+        throw argumentViolation({
+          operation: input.operation,
+          stance: input.stance,
+          validationCategory: 'ARGUMENT_REFERENCE_VALIDATION',
+          invariantCode: 'ARGUMENT_CLAIM_UNKNOWN_REFERENCE',
+          issuePath: slot,
+          safeExplanation:
+            'A server-issued argument option referenced evidence outside the ledger.',
+          argumentPointIndex: pointIndex,
+          evidenceId,
+          evidenceIds: option.evidenceClaimIds,
+          assumptionId: option.targetAssumptionId,
+        });
+      }
+      return evidence;
+    });
+    assertSemanticEvidenceMatch({
+      operation: input.operation,
+      stance: input.stance,
+      pointIndex,
+      measurementText: option.qualitativeInterpretation,
+      interpretation: option.qualitativeInterpretation,
+      evidenceTypes: new Set(claims.map((claim) => claim.observation.type)),
+      ledgerEvidenceTypes: new Set(
+        input.ledger.items.map((item) => item.observation.type)
+      ),
+      evidenceIds: option.evidenceClaimIds,
+      targetAssumptionIds: [option.targetAssumptionId],
+    });
+    const exactEvidence = claims
+      .map((evidence) => `[${evidence.id}] ${evidence.claim}`)
+      .join('\n');
+    return {
+      id: deterministicId('argp', {
+        thesisId: input.thesis.id,
+        stance: input.stance,
+        slot,
+        optionId: option.optionId,
+      }),
+      title: option.title,
+      reasoning: `Evidence:\n${exactEvidence}\nInterpretation: ${relationLabels[option.relation]} ${option.qualitativeInterpretation}`,
+      evidenceIds: [...option.evidenceClaimIds],
+      targetAssumptionIds: [option.targetAssumptionId],
+      weight: ARGUMENT_SLOT_WEIGHTS[slot],
+    };
+  });
+
+  const primaryOption = optionById.get(input.plan.primary);
+  const primaryAssumption = primaryOption
+    ? assumptionById.get(primaryOption.targetAssumptionId)
+    : undefined;
+  if (!primaryOption || !primaryAssumption) {
+    throw DissentError.analysisFailed(
+      'ARGUING',
+      'The validated primary argument option could not be materialized.'
+    );
+  }
+  const additionalFrameLabels = [
+    '',
+    ' alongside one additional authorized semantic frame.',
+    ' alongside two additional authorized semantic frames.',
+    ' alongside three additional authorized semantic frames.',
+    ' alongside four additional authorized semantic frames.',
+  ] as const;
+  const summary = `Evidence-bound interpretation prioritizes ${interpretationKindLabel(primaryOption.interpretationKind)} for the selected ${primaryAssumption.category.toLowerCase().replaceAll('_', ' ')} assumption${selected.length === 1 ? '.' : additionalFrameLabels[selected.length - 1]}`;
+  const assembledArgument = {
+    id: deterministicId('arg', {
+      thesisId: input.thesis.id,
+      stance: input.stance,
+      selectedOptionIds: selected.map(({ option }) => option.optionId),
+    }),
+    thesisId: input.thesis.id,
+    stance: input.stance,
+    summary,
+    points,
+    risksOrCounterweightsConsidered: authorizedResearchLimitationCatalog(
+      input.ledger
+    ).map((limitation) => `Research limitation: ${limitation.exactWording}`),
     createdAt: input.createdAt,
     schemaVersion: 1,
   };

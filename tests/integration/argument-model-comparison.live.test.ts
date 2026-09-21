@@ -11,7 +11,10 @@ import { DissentError } from '@/core/errors/domain-errors';
 import { DeepSeekAnalystAdapter } from '@/server/ai/deepseek-analyst.adapter';
 import { assertAdvocateDissenterDistinct } from '@/server/ai/argument-validation';
 import { DeepSeekResponsesClient } from '@/server/ai/deepseek-responses.client';
-import { evidenceCatalog } from '@/server/ai/grounding';
+import {
+  authorizedArgumentPointCatalog,
+  evidenceCatalog,
+} from '@/server/ai/grounding';
 import type {
   ModelCallMetadata,
   StructuredModelPort,
@@ -214,11 +217,7 @@ async function runArgumentOperation(input: {
       finalAttempt.failure = safeFailure(error);
     }
     if (finalAttempt && finalAttempt.attempt > 1) {
-      finalAttempt.recoveryKind =
-        metadata?.recoveryKind ??
-        (attempts[0]?.failure?.code === 'OUTPUT_TRUNCATED'
-          ? 'TRUNCATION'
-          : 'STRUCTURAL');
+      finalAttempt.recoveryKind = metadata?.recoveryKind ?? 'TRUNCATION';
     }
     return {
       result: {
@@ -376,6 +375,66 @@ describe('argument model comparison fixture', () => {
     }
     expect(() => budget.reserve()).toThrow(/provider-call ceiling reached/i);
     expect(budget.count()).toBe(MAX_EXPERIMENT_PROVIDER_CALLS);
+  });
+
+  it('exercises the production selection catalog and fixed-slot contract for both roles', async () => {
+    const fixture = makeArgumentModelComparisonFixture();
+    const catalogs = {
+      ADVOCATE: authorizedArgumentPointCatalog({
+        ...fixture,
+        stance: 'ADVOCATE',
+      }),
+      DISSENTER: authorizedArgumentPointCatalog({
+        ...fixture,
+        stance: 'DISSENTER',
+      }),
+    } as const;
+
+    for (const [stance, catalog] of Object.entries(catalogs)) {
+      expect(catalog.length).toBeGreaterThan(0);
+      expect(catalog.every((option) => option.allowedStance === stance)).toBe(true);
+      expect(new Set(catalog.map((option) => option.optionId)).size).toBe(
+        catalog.length
+      );
+    }
+
+    for (const operation of [
+      'buildAdvocateCase',
+      'buildDissentCase',
+    ] as const) {
+      const contract = JSON.parse(
+        await captureModelFacingContract({ operation, fixture })
+      ) as {
+        schemaName: string;
+        jsonSchema: {
+          required: string[];
+          properties: Record<string, { enum: Array<string | null> }>;
+        };
+        userPayload: {
+          authorizedArgumentOptions: Array<{
+            optionId: string;
+            allowedStance: string;
+          }>;
+        };
+      };
+      const stance = operation === 'buildAdvocateCase' ? 'ADVOCATE' : 'DISSENTER';
+      const expectedCatalog = catalogs[stance];
+
+      expect(contract.schemaName).toBe(
+        `dissent_${stance.toLowerCase()}_argument_selection_v1`
+      );
+      expect(contract.jsonSchema.required).toEqual([
+        'primary',
+        'secondaryA',
+        'secondaryB',
+        'contextualA',
+        'contextualB',
+      ]);
+      expect(contract.jsonSchema.properties.primary?.enum).toEqual(
+        expectedCatalog.map((option) => option.optionId)
+      );
+      expect(contract.userPayload.authorizedArgumentOptions).toEqual(expectedCatalog);
+    }
   });
 });
 
