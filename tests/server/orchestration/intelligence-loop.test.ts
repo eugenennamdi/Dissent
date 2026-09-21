@@ -8,6 +8,7 @@ import {
   QueueModel,
   assumptionAssessmentDraftFromRequest,
   argumentDraft,
+  argumentPointSemanticRepair,
   extractionOutput,
   makeEvidenceLedger,
   stressResearchDraftFromRequest,
@@ -27,6 +28,17 @@ function draftWithoutAssumptionTarget(
       targetAssumptionIds: [],
       relation,
     })),
+  };
+}
+
+function oversizedDraftWithoutAssumptionTarget() {
+  const draft = draftWithoutAssumptionTarget(
+    'The historical observation does not establish forward persistence',
+    'CHALLENGES'
+  );
+  return {
+    ...draft,
+    points: Array.from({ length: 6 }, () => ({ ...draft.points[0] })),
   };
 }
 
@@ -166,6 +178,149 @@ describe('IntelligenceLoop', () => {
     ]);
     expect(result.modelCalls).toHaveLength(6);
     expect(result.brief.originalThesis).toBe(thesisInput.rawText);
+    expect(result.brief.humanDecision).toBeNull();
+    warning.mockRestore();
+  });
+
+  it('semantically repairs only the failed argument point and preserves completed stages', async () => {
+    const warning = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const invalidAdvocate = draftWithoutAssumptionTarget(
+      'This suggests relative performance supports the thesis'
+    );
+    const dissentDraft = {
+      ...draftWithoutAssumptionTarget(
+        'The historical observation does not establish forward persistence',
+        'CHALLENGES'
+      ),
+      summaryRationale:
+        'Available market evidence does not establish persistence across the thesis horizon',
+    };
+    const recoveredAdvocate = {
+      ...draftWithoutAssumptionTarget(
+        'A single-market observation does not establish relative performance'
+      ),
+      summaryRationale:
+        'The observed market evidence remains relevant but cannot establish relative performance',
+    };
+    const model = new QueueModel([
+      extractionOutput,
+      invalidAdvocate,
+      dissentDraft,
+      argumentPointSemanticRepair(recoveredAdvocate),
+      assumptionAssessmentDraftFromRequest,
+      stressResearchDraftFromRequest,
+      synthesisDraftFromRequest,
+    ]);
+    const ai = new DeepSeekAnalystAdapter({ model, now: () => new Date(FIXED_AT) });
+    let marketCalls = 0;
+    const marketDesk: MarketDeskPort = {
+      async gatherMarketObservations(thesis) {
+        marketCalls += 1;
+        return { ledger: makeEvidenceLedger(thesis.id), gaps: [], complete: true };
+      },
+    };
+
+    const result = await new IntelligenceLoop({ ai, marketDesk }).run(thesisInput);
+
+    expect(marketCalls).toBe(1);
+    expect(model.requests.map((request) => request.operation)).toEqual([
+      'structureThesis',
+      'buildAdvocateCase',
+      'buildDissentCase',
+      'buildAdvocateCase',
+      'assessAssumptions',
+      'generateStressResearch',
+      'synthesizeBrief',
+    ]);
+    expect(
+      model.requests.filter((request) => request.operation === 'structureThesis')
+    ).toHaveLength(1);
+    expect(
+      model.requests.filter((request) => request.operation === 'buildDissentCase')
+    ).toHaveLength(1);
+    expect(
+      model.requests.filter((request) => request.operation === 'buildAdvocateCase')
+    ).toHaveLength(2);
+    expect(result.modelCalls).toHaveLength(7);
+    expect(
+      result.modelCalls.filter((record) => record.operation === 'buildDissentCase')
+    ).toEqual([
+      expect.objectContaining({ attempt: 1 }),
+    ]);
+    expect(
+      result.modelCalls.filter((record) => record.operation === 'buildAdvocateCase')
+    ).toEqual([
+      expect.objectContaining({ attempt: 1 }),
+      expect.objectContaining({ attempt: 2, recoveryKind: 'SEMANTIC' }),
+    ]);
+    expect(result.advocateCase.stance).toBe('ADVOCATE');
+    expect(result.dissentCase.stance).toBe('DISSENTER');
+    expect(result.advocateCase.summary).not.toBe(result.dissentCase.summary);
+    expect(result.brief.humanDecision).toBeNull();
+    warning.mockRestore();
+  });
+
+  it('regenerates only an oversized parallel Dissenter and preserves the valid Advocate', async () => {
+    const warning = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const advocateDraft = draftWithoutAssumptionTarget();
+    const recoveredDissent = {
+      ...draftWithoutAssumptionTarget(
+        'The historical observation does not establish forward persistence',
+        'CHALLENGES'
+      ),
+      summaryRationale:
+        'Available market evidence does not establish persistence across the thesis horizon',
+    };
+    const model = new QueueModel([
+      extractionOutput,
+      advocateDraft,
+      oversizedDraftWithoutAssumptionTarget(),
+      recoveredDissent,
+      assumptionAssessmentDraftFromRequest,
+      stressResearchDraftFromRequest,
+      synthesisDraftFromRequest,
+    ]);
+    const ai = new DeepSeekAnalystAdapter({ model, now: () => new Date(FIXED_AT) });
+    let marketCalls = 0;
+    const marketDesk: MarketDeskPort = {
+      async gatherMarketObservations(thesis) {
+        marketCalls += 1;
+        return { ledger: makeEvidenceLedger(thesis.id), gaps: [], complete: true };
+      },
+    };
+
+    const result = await new IntelligenceLoop({ ai, marketDesk }).run(thesisInput);
+
+    expect(marketCalls).toBe(1);
+    expect(model.requests.map((request) => request.operation)).toEqual([
+      'structureThesis',
+      'buildAdvocateCase',
+      'buildDissentCase',
+      'buildDissentCase',
+      'assessAssumptions',
+      'generateStressResearch',
+      'synthesizeBrief',
+    ]);
+    expect(
+      model.requests.filter((request) => request.operation === 'structureThesis')
+    ).toHaveLength(1);
+    expect(
+      model.requests.filter((request) => request.operation === 'buildAdvocateCase')
+    ).toHaveLength(1);
+    expect(
+      model.requests.filter((request) => request.operation === 'buildDissentCase')
+    ).toHaveLength(2);
+    expect(result.modelCalls).toHaveLength(6);
+    expect(
+      result.modelCalls.filter((record) => record.operation === 'buildAdvocateCase')
+    ).toEqual([expect.objectContaining({ attempt: 1 })]);
+    expect(
+      result.modelCalls.filter((record) => record.operation === 'buildDissentCase')
+    ).toEqual([
+      expect.objectContaining({ attempt: 2, recoveryKind: 'STRUCTURAL' }),
+    ]);
+    expect(result.advocateCase.stance).toBe('ADVOCATE');
+    expect(result.dissentCase.stance).toBe('DISSENTER');
     expect(result.brief.humanDecision).toBeNull();
     warning.mockRestore();
   });

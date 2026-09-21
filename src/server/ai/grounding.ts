@@ -99,21 +99,22 @@ const SEMANTIC_EVIDENCE_RULES: ReadonlyArray<{
   },
   {
     label: 'directional-positioning',
-    pattern: /\bdirectional positioning\b/i,
+    pattern:
+      /\b(?:directional (?:positioning|exposure)|traders? (?:are|is) net (?:long|short)(?:\s+(?:ETH|BTC))?)\b/i,
     absencePattern:
       /(?:\b(?:no|missing|absent|unavailable)\b[^.]{0,50}\bdirectional positioning\b|\bdirectional positioning(?: data| evidence| observations?| coverage)?\b[^.]{0,30}\b(?:missing|absent|unavailable)\b)/i,
     allowedTypes: new Set<EvidenceObservationTypeV1>(),
   },
   {
     label: 'institutional-participation',
-    pattern: /\binstitutional participation\b/i,
+    pattern: /\binstitutional (?:participation|positioning)\b/i,
     absencePattern:
       /(?:\b(?:no|missing|absent|unavailable)\b[^.]{0,50}\binstitutional participation\b|\binstitutional participation(?: data| evidence| observations?| coverage)?\b[^.]{0,30}\b(?:missing|absent|unavailable)\b)/i,
     allowedTypes: new Set<EvidenceObservationTypeV1>(),
   },
   {
     label: 'crowding',
-    pattern: /\bcrowding\b/i,
+    pattern: /\b(?:crowding|crowded)\b/i,
     absencePattern:
       /(?:\b(?:no|missing|absent|unavailable)\b[^.]{0,50}\bcrowding\b|\bcrowding(?: data| evidence| observations?| coverage)?\b[^.]{0,30}\b(?:missing|absent|unavailable)\b)/i,
     allowedTypes: new Set<EvidenceObservationTypeV1>(),
@@ -157,6 +158,19 @@ const SEMANTIC_EVIDENCE_RULES: ReadonlyArray<{
 
 const FORWARD_PERFORMANCE_ASSERTION_PATTERN =
   /\b(?:will|should|is expected to|is likely to|is certain to)\s+(?:outperform|underperform)\b/i;
+
+const QUALIFIED_NON_ESTABLISHMENT_PATTERN =
+  /\b(?:(?:do|does|did)\s+not\s+(?:(?:independently|alone|reliably)\s+|by itself\s+|on its own\s+)?(?:establish|prove|confirm|demonstrate|show)|(?:cannot|can't|could not|couldn't)\s+(?:(?:independently|alone|reliably)\s+|by itself\s+|on its own\s+)?(?:establish|prove|confirm|demonstrate|show)|(?:is|are|remain|remains)\s+(?:not\s+(?:established|proven|confirmed|demonstrated|shown)|unestablished|unknown|uncertain))\b/i;
+
+function isQualifiedNonEstablishment(text: string, measurementPattern: RegExp): boolean {
+  return text
+    .split(/(?:[.;!?]|\bbut\b|\bhowever\b)/i)
+    .some(
+      (clause) =>
+        measurementPattern.test(clause) &&
+        QUALIFIED_NON_ESTABLISHMENT_PATTERN.test(clause)
+    );
+}
 
 const EVIDENCE_CAPABILITIES: Record<
   EvidenceObservationTypeV1,
@@ -494,6 +508,9 @@ function assertSemanticEvidenceMatch(input: {
         assumptionId: input.targetAssumptionIds[0],
         extra: { measurementRule: rule.label },
       });
+    }
+    if (isQualifiedNonEstablishment(input.interpretation, rule.pattern)) {
+      continue;
     }
     if (!selectedEvidenceSupportsMeasurement) {
       throw argumentViolation({

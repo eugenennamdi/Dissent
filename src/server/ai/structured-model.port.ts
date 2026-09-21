@@ -15,7 +15,7 @@ export interface StructuredModelRequest<TSchema extends z.ZodTypeAny> {
 export interface ModelCallMetadata {
   operation?: string;
   attempt?: 1 | 2;
-  recoveryKind?: 'TRUNCATION' | 'STRUCTURAL';
+  recoveryKind?: 'TRUNCATION' | 'STRUCTURAL' | 'SEMANTIC';
   provider: 'DeepSeek';
   requestedModel?: string;
   model: string;

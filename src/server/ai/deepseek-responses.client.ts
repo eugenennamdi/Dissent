@@ -11,6 +11,73 @@ const DEFAULT_MODEL = 'deepseek-flash';
 const SUPPORTED_MODELS = new Set(['deepseek-flash', 'deepseek-v4-pro']);
 const DEFAULT_TIMEOUT_MS = 30_000;
 const MAX_PROMPT_CHARACTERS = 120_000;
+const COMPLETE_JSON_CODE_FENCE = /^```(?:json)?[\t ]*\r?\n([\s\S]*?)\r?\n```$/;
+
+function unwrapCompleteJsonCodeFence(outputText: string): string {
+  const match = COMPLETE_JSON_CODE_FENCE.exec(outputText.trim());
+  return match?.[1] ?? outputText;
+}
+
+interface SafeArrayDiagnostic {
+  actualArrayLength: number;
+  permittedMinimum?: number;
+  permittedMaximum?: number;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function valueAtPath(value: unknown, path: readonly (string | number)[]): unknown {
+  let current = value;
+  for (const segment of path) {
+    if (typeof segment === 'number') {
+      if (!Array.isArray(current)) return undefined;
+      current = current[segment];
+      continue;
+    }
+    if (!isRecord(current)) return undefined;
+    current = current[segment];
+  }
+  return current;
+}
+
+function jsonSchemaAtPath(
+  schema: unknown,
+  path: readonly (string | number)[]
+): Record<string, unknown> | undefined {
+  let current: unknown = schema;
+  for (const segment of path) {
+    if (!isRecord(current)) return undefined;
+    if (typeof segment === 'number') {
+      current = current.items;
+      continue;
+    }
+    const properties = current.properties;
+    if (!isRecord(properties)) return undefined;
+    current = properties[segment];
+  }
+  return isRecord(current) ? current : undefined;
+}
+
+function safeArrayDiagnostic(
+  modelValue: unknown,
+  jsonSchema: unknown,
+  path: readonly (string | number)[]
+): SafeArrayDiagnostic | undefined {
+  const actualValue = valueAtPath(modelValue, path);
+  if (!Array.isArray(actualValue)) return undefined;
+  const schema = jsonSchemaAtPath(jsonSchema, path);
+  const permittedMinimum =
+    typeof schema?.minItems === 'number' ? schema.minItems : undefined;
+  const permittedMaximum =
+    typeof schema?.maxItems === 'number' ? schema.maxItems : undefined;
+  return {
+    actualArrayLength: actualValue.length,
+    ...(permittedMinimum === undefined ? {} : { permittedMinimum }),
+    ...(permittedMaximum === undefined ? {} : { permittedMaximum }),
+  };
+}
 
 const DeepSeekResponseSchema = z
   .object({
@@ -257,7 +324,7 @@ export class DeepSeekResponsesClient implements StructuredModelPort {
 
     let modelValue: unknown;
     try {
-      modelValue = JSON.parse(outputText);
+      modelValue = JSON.parse(unwrapCompleteJsonCodeFence(outputText));
     } catch (cause) {
       throw DissentError.modelOutputInvalid(request.operation, 'output_text was not valid JSON.', {
         requestId,
@@ -279,6 +346,14 @@ export class DeepSeekResponsesClient implements StructuredModelPort {
           ? { expected: issue.expected, received: issue.received }
           : {}),
       }));
+      const arrayIssue = validated.error.issues.find(
+        (issue) =>
+          (issue.code === 'too_big' || issue.code === 'too_small') &&
+          issue.type === 'array'
+      );
+      const arrayDiagnostic = arrayIssue
+        ? safeArrayDiagnostic(modelValue, request.jsonSchema, arrayIssue.path)
+        : undefined;
       const failedAssessmentIndex = validated.error.issues.find(
         (issue) => issue.path[0] === 'assumptionAssessments' && typeof issue.path[1] === 'number'
       )?.path[1];
@@ -325,6 +400,7 @@ export class DeepSeekResponsesClient implements StructuredModelPort {
         safeExplanation,
         argumentStance,
         argumentPointIndex,
+        ...arrayDiagnostic,
         assumptionId: safeAssumptionId,
         issues,
         attempt: request.attempt ?? 1,
@@ -347,6 +423,7 @@ export class DeepSeekResponsesClient implements StructuredModelPort {
           safeExplanation,
           argumentStance,
           argumentPointIndex,
+          ...arrayDiagnostic,
           assumptionId: safeAssumptionId,
           issues,
           attempt: request.attempt ?? 1,

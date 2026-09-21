@@ -68,18 +68,54 @@ export class QueueModel implements StructuredModelPort {
     const output = typeof queued === 'function' ? queued(request) : queued;
     const parsed = request.schema.safeParse(output);
     if (!parsed.success) {
+      const issues = parsed.error.issues.map((issue) => ({
+        code: issue.code,
+        path: issue.path.map(String).join('.'),
+        ...(issue.code === 'invalid_type'
+          ? { expected: issue.expected, received: issue.received }
+          : {}),
+      }));
+      const arrayIssue = parsed.error.issues.find(
+        (issue) =>
+          (issue.code === 'too_big' || issue.code === 'too_small') &&
+          issue.type === 'array' &&
+          issue.path.length === 1
+      );
+      const arrayKey = typeof arrayIssue?.path[0] === 'string' ? arrayIssue.path[0] : undefined;
+      const modelArray =
+        arrayKey &&
+        output !== null &&
+        typeof output === 'object' &&
+        arrayKey in output &&
+        Array.isArray((output as Record<string, unknown>)[arrayKey])
+          ? ((output as Record<string, unknown>)[arrayKey] as unknown[])
+          : undefined;
+      const providerProperties = request.jsonSchema.properties;
+      const providerArrayProperty =
+        arrayKey &&
+        providerProperties !== null &&
+        typeof providerProperties === 'object' &&
+        !Array.isArray(providerProperties) &&
+        arrayKey in providerProperties &&
+        (providerProperties as Record<string, unknown>)[arrayKey] !== null &&
+        typeof (providerProperties as Record<string, unknown>)[arrayKey] === 'object' &&
+        !Array.isArray((providerProperties as Record<string, unknown>)[arrayKey])
+          ? ((providerProperties as Record<string, unknown>)[arrayKey] as Record<string, unknown>)
+          : undefined;
       throw DissentError.modelOutputInvalid(
         request.operation,
         'Structured output did not match its application schema.',
         {
           validationCategory: 'APPLICATION_SCHEMA_VALIDATION',
-          issues: parsed.error.issues.map((issue) => ({
-            code: issue.code,
-            path: issue.path.map(String).join('.'),
-            ...(issue.code === 'invalid_type'
-              ? { expected: issue.expected, received: issue.received }
-              : {}),
-          })),
+          issues,
+          ...(arrayIssue && arrayKey && modelArray
+            ? {
+                issuePath: arrayKey,
+                actualArrayLength: modelArray.length,
+                permittedMinimum: providerArrayProperty?.minItems as number | undefined,
+                permittedMaximum: providerArrayProperty?.maxItems as number | undefined,
+              }
+            : {}),
         }
       );
     }
@@ -256,6 +292,26 @@ export function argumentDraft(
   } as const;
 }
 
+export function argumentPointSemanticRepair(
+  draft: {
+    points: ReadonlyArray<{
+      title: string;
+      evidenceClaimIds: readonly string[];
+      relation: 'SUPPORTS' | 'CHALLENGES' | 'CONTEXT_ONLY' | 'LIMITS_CONFIDENCE';
+      qualitativeRationale: string;
+    }>;
+  }
+) {
+  const point = draft.points[0];
+  if (!point) throw new Error('Argument draft requires a point for semantic repair.');
+  return {
+    title: point.title,
+    evidenceClaimIds: [...point.evidenceClaimIds],
+    relation: point.relation,
+    qualitativeRationale: point.qualitativeRationale,
+  };
+}
+
 export function stressDraft(input: {
   assumptionIds?: string[];
   argumentPointIds?: string[];
@@ -344,6 +400,44 @@ export function stressResearchDraft(input: {
   return {
     scenarios: draft.scenarios,
     invalidationConditions: draft.invalidationConditions,
+  };
+}
+
+export function stressResearchDraftWithScenarioCount(
+  count: number,
+  input: {
+    assumptionIds?: string[];
+    argumentPointIds?: string[];
+    evidenceIds?: string[];
+  } = {}
+) {
+  const base = stressResearchDraft(input);
+  const scenarioTypes = [
+    'ASSET_SPECIFIC_EVENT',
+    'MACRO_REGIME_CHANGE',
+    'LIQUIDITY_SHOCK',
+    'POSITIONING_REVERSAL',
+    'VOLATILITY_EXPANSION',
+    'CORRELATION_BREAKDOWN',
+    'LIQUIDATION_CASCADE',
+    'MARKET_STRUCTURE_DETERIORATION',
+    'OTHER',
+  ] as const;
+  const scenarios = Array.from({ length: count }, (_, index) => {
+    const template = base.scenarios[index % base.scenarios.length]!;
+    const scenarioType = scenarioTypes[index % scenarioTypes.length]!;
+    return {
+      ...template,
+      name: `Distinct scenario name ${index + 1}`,
+      hypotheticalChange: `Distinct hypothetical change condition ${index + 1}`,
+      transmissionMechanism: `Distinct scenario transmission mechanism explanation ${index + 1}`,
+      consequenceForThesis: `Distinct potential consequence for the thesis ${index + 1}`,
+      scenarioType,
+    };
+  });
+  return {
+    scenarios,
+    invalidationConditions: base.invalidationConditions,
   };
 }
 

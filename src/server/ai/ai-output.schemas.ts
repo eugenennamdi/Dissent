@@ -129,6 +129,70 @@ export const ArgumentRelationSchema = z.enum([
 
 const ArgumentWeightSchema = z.enum(['PRIMARY', 'SECONDARY', 'CONTEXTUAL']);
 
+const ArgumentPointSemanticRepairBaseSchema = z
+  .object({
+    title: z.string().min(1).max(120),
+    evidenceClaimIds: z.array(z.string().min(1)).min(1).max(4),
+    relation: ArgumentRelationSchema,
+    qualitativeRationale: z.string().min(1).max(500),
+  })
+  .strict();
+
+export type ArgumentPointSemanticRepairOutput = z.infer<
+  typeof ArgumentPointSemanticRepairBaseSchema
+>;
+
+export function createArgumentPointSemanticRepairOutputSchema(
+  evidenceClaimIds: readonly string[]
+): z.ZodType<ArgumentPointSemanticRepairOutput> {
+  const authorizedClaimIds = new Set(evidenceClaimIds);
+  return ArgumentPointSemanticRepairBaseSchema.superRefine((repair, context) => {
+    repair.evidenceClaimIds.forEach((claimId, index) => {
+      if (!authorizedClaimIds.has(claimId)) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['evidenceClaimIds', index],
+          message: 'Evidence claim ID is not present in the authorized claim catalog.',
+        });
+      }
+    });
+  });
+}
+
+export function createArgumentPointSemanticRepairJsonSchema(
+  evidenceClaimIds: readonly string[]
+): Record<string, unknown> {
+  return {
+    type: 'object',
+    additionalProperties: false,
+    required: ['title', 'evidenceClaimIds', 'relation', 'qualitativeRationale'],
+    properties: {
+      title: {
+        type: 'string',
+        minLength: 1,
+        maxLength: 120,
+        pattern: NonNumericTextPattern,
+      },
+      evidenceClaimIds: {
+        type: 'array',
+        minItems: 1,
+        maxItems: 4,
+        items: { type: 'string', enum: evidenceClaimIds },
+      },
+      relation: {
+        type: 'string',
+        enum: ['SUPPORTS', 'CHALLENGES', 'CONTEXT_ONLY', 'LIMITS_CONFIDENCE'],
+      },
+      qualitativeRationale: {
+        type: 'string',
+        minLength: 1,
+        maxLength: 500,
+        pattern: NonNumericTextPattern,
+      },
+    },
+  };
+}
+
 const EvidenceInterpretationDraftPointSchema = z
   .object({
     pointKind: z.literal('EVIDENCE_INTERPRETATION'),
@@ -333,6 +397,8 @@ export const AssumptionAssessmentDraftOutputSchema = z
   })
   .strict();
 
+export const STRESS_TRANSMISSION_MECHANISM_MAX_LENGTH = 400;
+
 export const StressResearchDraftOutputSchema = z
   .object({
     scenarios: z
@@ -344,7 +410,10 @@ export const StressResearchDraftOutputSchema = z
             affectedAssumptionIds: z.array(z.string().min(1)).min(1).max(4),
             relevantEvidenceIds: z.array(z.string().min(1)).min(1).max(4),
             relevantArgumentPointIds: z.array(z.string().min(1)).min(1).max(4),
-            transmissionMechanism: z.string().min(1).max(400),
+            transmissionMechanism: z
+              .string()
+              .min(1)
+              .max(STRESS_TRANSMISSION_MECHANISM_MAX_LENGTH),
             scenarioType: z.enum([
               'MACRO_REGIME_CHANGE',
               'LIQUIDITY_SHOCK',
@@ -476,7 +545,9 @@ export function createStressResearchJsonSchema(input: {
             affectedAssumptionIds: idArray(input.assumptionIds, 1),
             relevantEvidenceIds: idArray(input.evidenceIds, 1),
             relevantArgumentPointIds: idArray(input.argumentPointIds, 1),
-            transmissionMechanism: nonNumericString(400),
+            transmissionMechanism: nonNumericString(
+              STRESS_TRANSMISSION_MECHANISM_MAX_LENGTH
+            ),
             scenarioType: {
               type: 'string',
               enum: [
