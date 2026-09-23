@@ -6,46 +6,27 @@ import type { EvidenceLedgerV1, EvidenceV1 } from '@/core/contracts/evidence';
 import {
   formatUtcDateTime,
   getEvidenceFreshness,
-  getSafeExternalUrl,
 } from '@/lib/formatters/market-formatters';
-import { Card, CardContent } from '@/components/ui/card';
+import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogDescription,
-} from '@/components/ui/dialog';
-import {
-  Database,
-  Calendar,
-  ExternalLink,
-  Layers,
-  Copy,
-  Check,
-  Clock,
-  Fingerprint,
-  FileCode,
-  ShieldCheck,
-  ShieldAlert,
-  HelpCircle,
-} from 'lucide-react';
+import { EvidenceDetailDialog } from './EvidenceDetailDialog';
+import { Database, Clock } from 'lucide-react';
 
 interface EvidenceInspectorProps {
   ledger: EvidenceLedgerV1;
   selectedEvidenceId: string | null;
   onClearSelectedEvidence: () => void;
+  onInspectEvidence?: (evidence: EvidenceV1, triggerElement?: HTMLElement) => void;
 }
 
 export function EvidenceInspector({
   ledger,
   selectedEvidenceId,
   onClearSelectedEvidence,
+  onInspectEvidence,
 }: EvidenceInspectorProps) {
   const [stanceFilter, setStanceFilter] = useState<'ALL' | 'SUPPORTING' | 'CONTRADICTING' | 'NEUTRAL'>('ALL');
-  const [activeEvidenceModal, setActiveEvidenceModal] = useState<EvidenceV1 | null>(null);
+  const [internalModalItem, setInternalModalItem] = useState<EvidenceV1 | null>(null);
 
   const items = ledger.items;
 
@@ -54,15 +35,19 @@ export function EvidenceInspector({
     return true;
   });
 
-  const handleOpenDetail = (item: EvidenceV1) => {
-    setActiveEvidenceModal(item);
+  const handleOpenDetail = (item: EvidenceV1, e: React.MouseEvent<HTMLDivElement>) => {
+    if (onInspectEvidence) {
+      onInspectEvidence(item, e.currentTarget);
+    } else {
+      setInternalModalItem(item);
+    }
   };
 
   const selectedItem = selectedEvidenceId ? items.find((i) => i.id === selectedEvidenceId) : null;
-  const currentModalItem = activeEvidenceModal ?? selectedItem;
+  const currentModalItem = internalModalItem ?? selectedItem;
 
   const handleCloseModal = () => {
-    setActiveEvidenceModal(null);
+    setInternalModalItem(null);
     onClearSelectedEvidence();
   };
 
@@ -73,14 +58,14 @@ export function EvidenceInspector({
         <div className="space-y-0.5">
           <div className="flex items-center gap-2">
             <Database className="w-4 h-4 text-sky-400" />
-            <h3 className="text-lg sm:text-xl font-semibold text-foreground font-sans tracking-tight">
+            <h3 className="text-base sm:text-lg font-semibold text-foreground font-sans tracking-tight">
               Evidence Ledger & Provenance
             </h3>
             <Badge variant="outline" className="text-xs font-mono font-normal">
               {ledger.summary.totalCount} Immutable Observations
             </Badge>
           </div>
-          <p className="text-xs font-mono text-muted-foreground">
+          <p className="text-xs font-sans text-muted-foreground">
             Audit-grade market facts from Bitget with cryptographic lineage and exact timestamps.
           </p>
         </div>
@@ -148,7 +133,7 @@ export function EvidenceInspector({
           </button>
         </div>
 
-        <div className="text-muted-foreground text-[11px] flex items-center gap-1.5">
+        <div className="text-muted-foreground text-[11px] font-mono flex items-center gap-1.5">
           <Clock className="w-3 h-3 text-muted-foreground/70" />
           <span>Ledger Assembled:</span>
           <span className="text-foreground tabular-nums">{formatUtcDateTime(ledger.assembledAt)}</span>
@@ -164,11 +149,19 @@ export function EvidenceInspector({
           return (
             <Card
               key={item.id}
-              onClick={() => handleOpenDetail(item)}
-              className={`p-4 transition-all cursor-pointer flex flex-col justify-between space-y-3 active:scale-[0.99] select-none ${
+              role="button"
+              tabIndex={0}
+              onClick={(e) => handleOpenDetail(item, e)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault();
+                  handleOpenDetail(item, e as unknown as React.MouseEvent<HTMLDivElement>);
+                }
+              }}
+              className={`p-4 transition-all cursor-pointer flex flex-col justify-between space-y-3 active:scale-[0.99] select-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none ${
                 isSelected
                   ? 'border-ring ring-1 ring-ring bg-secondary/90 shadow-md'
-                  : 'border-border/80 bg-card hover:border-muted-foreground/40 hover:bg-card/90 shadow-xs'
+                  : 'border-border/80 bg-card hover:border-border hover:bg-card/90 shadow-xs'
               }`}
             >
               <div className="space-y-2.5">
@@ -211,20 +204,20 @@ export function EvidenceInspector({
                 </div>
 
                 {/* Observation Meta */}
-                <div className="space-y-1 text-[11px] font-mono text-muted-foreground bg-background/90 p-2.5 rounded-md border border-border/60 shadow-inner">
+                <div className="space-y-1 text-[11px] font-mono text-muted-foreground bg-secondary/60 p-2.5 rounded-md border border-border/60 shadow-inner">
                   <div className="flex justify-between">
-                    <span className="text-muted-foreground/80">Market / Sym:</span>
+                    <span className="text-muted-foreground">Market / Sym:</span>
                     <span className="text-foreground font-medium">
                       {item.observation.market} ({item.observation.providerSymbol})
                     </span>
                   </div>
                   <div className="flex justify-between">
-                    <span className="text-muted-foreground/80">Obs Type:</span>
+                    <span className="text-muted-foreground">Obs Type:</span>
                     <span className="text-foreground/90">{item.observation.type}</span>
                   </div>
                   {item.value !== undefined && (
                     <div className="flex justify-between border-t border-border/40 pt-1 mt-1">
-                      <span className="text-muted-foreground/80">Observed Value:</span>
+                      <span className="text-muted-foreground">Observed Value:</span>
                       <span className="text-emerald-400 font-bold tabular-nums">
                         {item.value} {item.unit ?? ''}
                       </span>
@@ -236,267 +229,20 @@ export function EvidenceInspector({
               {/* Provenance Footer */}
               <div className="pt-2 border-t border-border/40 flex items-center justify-between text-[10px] font-mono text-muted-foreground">
                 <span className="truncate max-w-[140px]">{item.provenance.sourceName}</span>
-                <span className="text-sky-400/90 group-hover:text-sky-300">Inspect provenance →</span>
+                <span className="text-sky-400 group-hover:text-sky-300">Inspect provenance →</span>
               </div>
             </Card>
           );
         })}
       </div>
 
-      {/* Detailed Modal for In-Depth Provenance Inspection */}
-      <Dialog open={!!currentModalItem} onOpenChange={(open) => !open && handleCloseModal()}>
-        {currentModalItem && (
-          <EvidenceDetailDialogContent
-            evidence={currentModalItem}
-            onClose={handleCloseModal}
-          />
-        )}
-      </Dialog>
+      {/* Internal dialog if not managed by parent */}
+      {!onInspectEvidence && currentModalItem && (
+        <EvidenceDetailDialog
+          evidence={currentModalItem}
+          onClose={handleCloseModal}
+        />
+      )}
     </div>
-  );
-}
-
-function EvidenceDetailDialogContent({
-  evidence,
-  onClose,
-}: {
-  evidence: EvidenceV1;
-  onClose: () => void;
-}) {
-  const [copiedRaw, setCopiedRaw] = useState(false);
-  const freshness = getEvidenceFreshness(evidence);
-  const safeExternalUrl = getSafeExternalUrl(evidence.provenance.endpointOrLocator);
-  const isDerived = evidence.nature === 'DERIVED';
-
-  const handleCopyRaw = async () => {
-    if (!evidence.provenance.rawSnapshot) return;
-    try {
-      await navigator.clipboard.writeText(JSON.stringify(evidence.provenance.rawSnapshot, null, 2));
-      setCopiedRaw(true);
-      setTimeout(() => setCopiedRaw(false), 2000);
-    } catch {
-      // non-fatal
-    }
-  };
-
-  return (
-    <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto p-5 sm:p-6 space-y-4">
-      {/* Header */}
-      <DialogHeader className="text-left space-y-2 border-b border-border/60 pb-3">
-        <div className="flex items-center gap-2 text-xs font-mono">
-          <Badge variant="highlight" className="gap-1 px-2 py-0.5 text-xs">
-            <Fingerprint className="w-3.5 h-3.5 text-sky-400" />
-            <span>Immutable Observation</span>
-          </Badge>
-          <span className="text-muted-foreground/60">•</span>
-          <span className="text-muted-foreground font-mono text-[11px]">#{evidence.id}</span>
-        </div>
-        <DialogTitle className="text-base sm:text-lg font-semibold text-foreground font-sans leading-snug">
-          {evidence.claim}
-        </DialogTitle>
-        <DialogDescription className="text-xs font-mono text-muted-foreground">
-          Cryptographically referenced market observation ingested directly from Bitget exchange data.
-        </DialogDescription>
-      </DialogHeader>
-
-      {/* Categorization & Stance Badges */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs font-mono">
-        <div className="p-2.5 rounded-lg bg-background/90 border border-border/60">
-          <div className="text-[10px] text-muted-foreground uppercase">Stance</div>
-          <div className="mt-1">
-            <Badge
-              variant={
-                evidence.stance === 'SUPPORTING'
-                  ? 'supporting'
-                  : evidence.stance === 'CONTRADICTING'
-                    ? 'contradicting'
-                    : 'neutral'
-              }
-              className="text-xs py-0 px-1.5 font-mono uppercase"
-            >
-              {evidence.stance}
-            </Badge>
-          </div>
-        </div>
-
-        <div className="p-2.5 rounded-lg bg-background/90 border border-border/60">
-          <div className="text-[10px] text-muted-foreground uppercase">Category</div>
-          <div className="text-foreground font-semibold mt-1">{evidence.category}</div>
-        </div>
-
-        <div className="p-2.5 rounded-lg bg-background/90 border border-border/60">
-          <div className="text-[10px] text-muted-foreground uppercase">Nature</div>
-          <div className="text-foreground font-semibold mt-1">{evidence.nature}</div>
-        </div>
-
-        <div className="p-2.5 rounded-lg bg-background/90 border border-border/60">
-          <div className="text-[10px] text-muted-foreground uppercase">Freshness</div>
-          <div className="text-foreground font-semibold mt-1">{freshness.level}</div>
-        </div>
-      </div>
-
-      {/* Observation Details */}
-      <div className="space-y-2">
-        <div className="text-xs font-mono uppercase text-muted-foreground font-medium">
-          Market Observation Details
-        </div>
-        <div className="p-3.5 rounded-lg bg-background/90 border border-border/60 space-y-2 text-xs font-mono">
-          <div className="flex justify-between">
-            <span className="text-muted-foreground">Target Market:</span>
-            <span className="text-foreground font-semibold">{evidence.observation.market}</span>
-          </div>
-          <div className="flex justify-between">
-            <span className="text-muted-foreground">Instrument Type:</span>
-            <span className="text-foreground">{evidence.observation.instrumentType}</span>
-          </div>
-          <div className="flex justify-between">
-            <span className="text-muted-foreground">Provider Symbol:</span>
-            <span className="text-foreground">{evidence.observation.providerSymbol}</span>
-          </div>
-          <div className="flex justify-between">
-            <span className="text-muted-foreground">Observation Type:</span>
-            <span className="text-foreground">{evidence.observation.type}</span>
-          </div>
-          {evidence.observation.interval && (
-            <div className="flex justify-between">
-              <span className="text-muted-foreground">Interval:</span>
-              <span className="text-foreground">{evidence.observation.interval}</span>
-            </div>
-          )}
-          {evidence.value !== undefined && (
-            <div className="flex justify-between border-t border-border/40 pt-2 mt-2">
-              <span className="text-muted-foreground">Canonical Value:</span>
-              <span className="text-emerald-400 font-bold tabular-nums">
-                {evidence.value} {evidence.unit ?? ''}
-              </span>
-            </div>
-          )}
-        </div>
-      </div>
-
-      {/* Provenance & Timestamps (Strict Separation) */}
-      <div className="space-y-2">
-        <div className="text-xs font-mono uppercase text-muted-foreground font-medium">
-          Provenance Lineage & Ingestion Timestamps
-        </div>
-        <div className="p-3.5 rounded-lg bg-background/90 border border-border/60 space-y-2 text-xs font-mono">
-          <div className="flex justify-between">
-            <span className="text-muted-foreground">Source Provider:</span>
-            <span className="text-foreground font-semibold">{evidence.provenance.sourceName}</span>
-          </div>
-          <div className="flex justify-between">
-            <span className="text-muted-foreground">Source Type:</span>
-            <span className="text-foreground">{evidence.provenance.sourceType}</span>
-          </div>
-          <div className="flex justify-between items-center">
-            <span className="text-muted-foreground">Endpoint / Locator:</span>
-            {safeExternalUrl ? (
-              <a
-                href={safeExternalUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="inline-flex items-center gap-1 text-sky-400 hover:text-sky-300 hover:underline"
-              >
-                <span>{evidence.provenance.endpointOrLocator}</span>
-                <ExternalLink className="w-3 h-3" />
-              </a>
-            ) : (
-              <span className="text-foreground/90">{evidence.provenance.endpointOrLocator}</span>
-            )}
-          </div>
-          <div className="flex justify-between">
-            <span className="text-muted-foreground">Observed At (Source Event):</span>
-            <span className="text-foreground tabular-nums">
-              {formatUtcDateTime(evidence.provenance.observedAt)}
-            </span>
-          </div>
-          <div className="flex justify-between">
-            <span className="text-muted-foreground">Retrieved At (Desk Ingestion):</span>
-            <span className="text-foreground tabular-nums">
-              {formatUtcDateTime(evidence.provenance.retrievedAt)}
-            </span>
-          </div>
-          {evidence.provenance.contentHash && (
-            <div className="flex justify-between items-center border-t border-border/40 pt-2 mt-2">
-              <span className="text-muted-foreground">Cryptographic Content Hash:</span>
-              <span className="text-muted-foreground font-mono text-[11px] tabular-nums">
-                {evidence.provenance.contentHash.slice(0, 16)}…
-              </span>
-            </div>
-          )}
-        </div>
-      </div>
-
-      {/* Derived Evidence Lineage */}
-      {isDerived && evidence.derivedFromEvidenceIds.length > 0 && (
-        <div className="space-y-2">
-          <div className="text-xs font-mono uppercase text-muted-foreground font-medium">
-            Derived Formula Lineage
-          </div>
-          <div className="p-3 rounded-lg bg-background/90 border border-border/60 text-xs font-mono space-y-1.5">
-            <div className="text-muted-foreground">Computed deterministically from source observations:</div>
-            <div className="flex flex-wrap gap-1.5 pt-1">
-              {evidence.derivedFromEvidenceIds.map((parentId) => (
-                <Badge
-                  key={parentId}
-                  variant="outline"
-                  className="bg-card text-sky-400 border-border/80"
-                >
-                  #{parentId.slice(0, 12)}…
-                </Badge>
-              ))}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Raw Snapshot (if present) */}
-      {evidence.provenance.rawSnapshot && (
-        <details className="text-xs font-mono text-muted-foreground">
-          <summary className="cursor-pointer hover:text-foreground transition-colors py-1 flex items-center justify-between select-none">
-            <span className="flex items-center gap-1.5">
-              <FileCode className="w-3.5 h-3.5" />
-              <span>View Raw Ingestion Snapshot</span>
-            </span>
-          </summary>
-          <div className="relative mt-2">
-            <pre className="p-3 rounded-lg bg-background/95 border border-border/80 overflow-x-auto text-[11px] text-foreground/90 max-h-48 leading-tight font-mono">
-              {JSON.stringify(evidence.provenance.rawSnapshot, null, 2)}
-            </pre>
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={handleCopyRaw}
-              className="absolute top-2 right-2 h-7 text-[10px] font-mono gap-1"
-            >
-              {copiedRaw ? (
-                <>
-                  <Check className="w-3 h-3 text-emerald-400" />
-                  <span>Copied</span>
-                </>
-              ) : (
-                <>
-                  <Copy className="w-3 h-3 text-muted-foreground" />
-                  <span>Copy JSON</span>
-                </>
-              )}
-            </Button>
-          </div>
-        </details>
-      )}
-
-      <div className="pt-2 flex justify-end">
-        <Button
-          type="button"
-          variant="secondary"
-          size="sm"
-          onClick={onClose}
-          className="text-xs font-mono"
-        >
-          Close Audit View
-        </Button>
-      </div>
-    </DialogContent>
   );
 }

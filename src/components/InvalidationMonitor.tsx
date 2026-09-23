@@ -2,98 +2,113 @@
 
 import React from 'react';
 import type { InvalidationConditionV1 } from '@/core/contracts/stress-scenario';
+import type { EvidenceLedgerV1, EvidenceV1 } from '@/core/contracts/evidence';
 import { getInvalidationUrgencyLabel } from '@/lib/formatters/market-formatters';
+import { EvidenceCitationBadge } from './EvidenceCitationBadge';
+import { Badge } from '@/components/ui/badge';
+import { AlertCircle } from 'lucide-react';
 
 interface InvalidationMonitorProps {
   conditions: InvalidationConditionV1[];
-  onSelectEvidence: (evidenceId: string) => void;
+  onSelectEvidence?: (evidenceId: string) => void;
+  ledger?: EvidenceLedgerV1;
+  onInspectEvidence?: (evidence: EvidenceV1, triggerElement?: HTMLElement) => void;
 }
 
 export function InvalidationMonitor({
   conditions,
   onSelectEvidence,
+  ledger,
+  onInspectEvidence,
 }: InvalidationMonitorProps) {
+  const handleInspect = (ev: EvidenceV1, triggerEl?: HTMLElement) => {
+    if (onInspectEvidence) {
+      onInspectEvidence(ev, triggerEl);
+    } else if (onSelectEvidence) {
+      onSelectEvidence(ev.id);
+    }
+  };
+
   return (
-    <div className="space-y-4">
+    <div className="space-y-3">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-        <div>
-          <h3 className="text-lg sm:text-xl font-semibold text-white font-sans flex items-center gap-2">
-            <span>Invalidation Condition Monitor</span>
-            <span className="text-xs font-mono font-normal px-2 py-0.5 rounded bg-[#21262d] text-[#8b949e]">
+        <div className="space-y-0.5">
+          <div className="flex items-center gap-2">
+            <span className="text-xs font-mono font-bold uppercase tracking-wider text-muted-foreground">
               Thesis Review Triggers
             </span>
-          </h3>
-          <p className="text-xs font-mono text-[#7d8590] mt-0.5">
-            Observable developments that would falsify the thesis. Not automated stop-losses or trade exits.
+            <span className="text-xs font-mono text-muted-foreground/60">•</span>
+            <span className="text-xs font-mono text-foreground font-semibold">
+              {conditions.length} {conditions.length === 1 ? 'Condition' : 'Conditions'} Monitored
+            </span>
+          </div>
+          <p className="text-[11px] font-sans text-muted-foreground">
+            Observable developments that would prompt thesis review. Not automated stop-losses or trade execution calls.
           </p>
         </div>
-
-        <span className="text-xs font-mono text-[#7d8590]">
-          {conditions.length} {conditions.length === 1 ? 'condition' : 'conditions'} defined
-        </span>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
         {conditions.map((item) => {
           const { label: urgencyLabel, badgeStyle } = getInvalidationUrgencyLabel(item.urgency);
 
           return (
             <div
               key={item.id}
-              className="border border-[#30363d] bg-[#161b22] rounded-lg p-4 sm:p-5 flex flex-col justify-between space-y-4"
+              className="border border-border/80 bg-card rounded-xl p-4 sm:p-5 flex flex-col justify-between space-y-3.5 shadow-xs"
             >
-              <div className="space-y-3">
+              <div className="space-y-2.5">
                 {/* Type and urgency badges */}
                 <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] font-mono">
                   <span className={`px-2 py-0.5 rounded border uppercase font-medium ${badgeStyle}`}>
                     {urgencyLabel}
                   </span>
-                  <span className="px-2 py-0.5 rounded bg-[#21262d] text-[#8b949e] border border-[#30363d]">
+                  <Badge variant="outline" className="text-[10px] py-0 px-1.5 font-mono uppercase">
                     {item.type}
-                  </span>
+                  </Badge>
                 </div>
 
                 {/* Primary statement */}
-                <div className="text-sm font-semibold text-white font-sans leading-snug">
+                <div className="text-sm font-semibold text-foreground font-sans leading-snug">
                   {item.statement}
                 </div>
 
                 {/* Metric or Event Details */}
                 {item.type === 'QUANTITATIVE' ? (
-                  <div className="space-y-2 p-3 rounded bg-[#0d0f12] border border-[#21262d] text-xs font-mono">
+                  <div className="space-y-1.5 p-3 rounded-lg bg-secondary/60 border border-border/60 text-xs font-mono">
                     <div className="flex justify-between">
-                      <span className="text-[#7d8590]">Target Metric:</span>
-                      <span className="text-[#c9d1d9] font-medium">{item.targetMetric}</span>
+                      <span className="text-muted-foreground">Target Metric:</span>
+                      <span className="text-foreground font-medium">{item.targetMetric}</span>
                     </div>
                     <div className="flex justify-between">
-                      <span className="text-[#7d8590]">Trigger Threshold:</span>
-                      <span className="text-rose-400 font-bold">{item.triggerThreshold}</span>
+                      <span className="text-muted-foreground">Trigger Threshold:</span>
+                      <span className="text-rose-400 font-bold tabular-nums">{item.triggerThreshold}</span>
                     </div>
                     <div className="flex justify-between">
-                      <span className="text-[#7d8590]">Timeframe:</span>
-                      <span className="text-[#c9d1d9]">{item.timeframe}</span>
+                      <span className="text-muted-foreground">Timeframe:</span>
+                      <span className="text-foreground">{item.timeframe}</span>
                     </div>
-                    <div className="flex justify-between border-t border-[#1c2128] pt-1.5 mt-1.5">
-                      <span className="text-[#7d8590]">Observation Source:</span>
-                      <span className="text-[#8b949e]">{item.observableDataSource}</span>
+                    <div className="flex justify-between border-t border-border/40 pt-1.5 mt-1.5">
+                      <span className="text-muted-foreground">Observation Source:</span>
+                      <span className="text-foreground/90">{item.observableDataSource}</span>
                     </div>
                   </div>
                 ) : (
-                  <div className="space-y-2 p-3 rounded bg-[#0d0f12] border border-[#21262d] text-xs font-sans">
+                  <div className="space-y-1.5 p-3 rounded-lg bg-secondary/60 border border-border/60 text-xs font-sans">
                     <div>
-                      <span className="text-[#7d8590] font-mono text-[10px] uppercase block mb-1">
+                      <span className="text-muted-foreground font-mono text-[10px] uppercase block mb-1 font-semibold">
                         Observable Event:
                       </span>
-                      <span className="text-[#c9d1d9]">{item.observableEvent}</span>
+                      <span className="text-foreground/95 leading-relaxed">{item.observableEvent}</span>
                     </div>
-                    <div className="pt-2 border-t border-[#1c2128] flex justify-between text-xs font-mono">
-                      <span className="text-[#7d8590]">Verification Source:</span>
-                      <span className="text-[#8b949e]">{item.verificationSource}</span>
+                    <div className="pt-2 border-t border-border/40 flex justify-between text-xs font-mono">
+                      <span className="text-muted-foreground">Verification Source:</span>
+                      <span className="text-foreground/90">{item.verificationSource}</span>
                     </div>
                     {item.expectedWindow && (
                       <div className="flex justify-between text-xs font-mono">
-                        <span className="text-[#7d8590]">Expected Window:</span>
-                        <span className="text-[#8b949e]">{item.expectedWindow}</span>
+                        <span className="text-muted-foreground">Expected Window:</span>
+                        <span className="text-foreground">{item.expectedWindow}</span>
                       </div>
                     )}
                   </div>
@@ -102,17 +117,15 @@ export function InvalidationMonitor({
 
               {/* Linked Evidence */}
               {item.relevantEvidenceIds && item.relevantEvidenceIds.length > 0 && (
-                <div className="pt-3 border-t border-[#21262d] flex flex-wrap items-center gap-1.5 text-[11px] font-mono">
-                  <span className="text-[#7d8590]">Baseline Evidence:</span>
+                <div className="pt-2.5 border-t border-border/40 flex flex-wrap items-center gap-1.5 text-xs font-mono">
+                  <span className="text-muted-foreground text-[10px] uppercase font-semibold">Baseline:</span>
                   {item.relevantEvidenceIds.map((id) => (
-                    <button
+                    <EvidenceCitationBadge
                       key={id}
-                      type="button"
-                      onClick={() => onSelectEvidence(id)}
-                      className="px-1.5 py-0.5 rounded bg-[#0d0f12] hover:bg-[#21262d] text-[#58a6ff] border border-[#30363d] cursor-pointer"
-                    >
-                      #{id.length > 10 ? `${id.slice(0, 8)}…` : id}
-                    </button>
+                      evidenceId={id}
+                      ledger={ledger}
+                      onInspect={handleInspect}
+                    />
                   ))}
                 </div>
               )}

@@ -31,29 +31,29 @@
 }
 
 :root {
-  --background: #080a0e;
-  --foreground: #e6edf3;
-  --card: #0d1117;
-  --card-foreground: #e6edf3;
-  --popover: #0d1117;
-  --popover-foreground: #e6edf3;
-  --primary: #238636;
-  --primary-foreground: #ffffff;
-  --secondary: #161b22;
-  --secondary-foreground: #c9d1d9;
-  --muted: #161b22;
-  --muted-foreground: #7d8590;
-  --accent: #21262d;
-  --accent-foreground: #f0f6fc;
-  --destructive: #da3633;
+  --background: #fafaf9;
+  --foreground: #18181b;
+  --card: #ffffff;
+  --card-foreground: #18181b;
+  --popover: #ffffff;
+  --popover-foreground: #18181b;
+  --primary: #18181b;
+  --primary-foreground: #fafaf9;
+  --secondary: #f4f4f5;
+  --secondary-foreground: #18181b;
+  --muted: #f4f4f5;
+  --muted-foreground: #71717a;
+  --accent: #f4f4f5;
+  --accent-foreground: #18181b;
+  --destructive: #be123c;
   --destructive-foreground: #ffffff;
-  --dissent: #d97706;
-  --dissent-foreground: #fef3c7;
-  --advocate: #059669;
-  --advocate-foreground: #d1fae5;
-  --border: #21262d;
-  --input: #30363d;
-  --ring: #58a6ff;
+  --dissent: #b45309;
+  --dissent-foreground: #fffbeb;
+  --advocate: #047857;
+  --advocate-foreground: #ecfdf5;
+  --border: #e4e4e7;
+  --input: #e4e4e7;
+  --ring: #18181b;
   --radius: 0.5rem;
 }
 
@@ -74,20 +74,22 @@ body {
 }
 
 ::-webkit-scrollbar-track {
-  background: #0d0f12;
+  background: #fafaf9;
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #21262d;
+  background: #d4d4d8;
   border-radius: 3px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #30363d;
+  background: #a1a1aa;
 }
 
-/* Accessible focus ring */
-:focus-visible {
-  outline: 2px solid #58a6ff;
-  outline-offset: 1px;
+/* Accessible focus ring - base default overridden by utility classes */
+@layer base {
+  :focus-visible {
+    outline: 2px solid #18181b;
+    outline-offset: 1px;
+  }
 }

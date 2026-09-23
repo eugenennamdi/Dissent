@@ -230,3 +230,51 @@ export function getEvidenceNatureLabel(nature: string): string {
       return nature;
   }
 }
+
+/**
+ * Formats a semantic evidence citation label respecting the exact observation type,
+ * exact value, source, and unit without inventing converted values or unknown units.
+ */
+export function formatEvidenceCitation(evidence: EvidenceV1): {
+  source: string;
+  market: string;
+  observationTypeLabel: string;
+  valueText?: string;
+  displayLabel: string;
+} {
+  const typeMap: Record<string, string> = {
+    LAST_PRICE: 'Price',
+    PRICE_CHANGE_24H: '24h Change',
+    BASE_VOLUME_24H: '24h Vol',
+    CANDLE_OPEN: 'Open',
+    CANDLE_CLOSE: 'Close',
+    INTERVAL_PRICE_CHANGE: 'Price Change',
+    RETURN_SPREAD: 'Return Spread',
+    RELATIVE_RETURN: 'Rel Return',
+    FUNDING_RATE: 'Funding Rate',
+    OPEN_INTEREST: 'Open Interest',
+  };
+
+  const observationTypeLabel = typeMap[evidence.observation.type] ?? evidence.observation.type;
+  const market = evidence.observation.market;
+  const rawSource = evidence.provenance.sourceName;
+  const source = rawSource.toLowerCase().includes('bitget') ? 'Bitget' : rawSource;
+
+  let valueText: string | undefined = undefined;
+  if (evidence.value !== undefined) {
+    valueText = evidence.unit
+      ? `${evidence.value} ${evidence.unit}`
+      : `${evidence.value}`;
+  }
+
+  const baseLabel = `${source}: ${market} ${observationTypeLabel}`;
+  const displayLabel = valueText ? `${baseLabel} (${valueText})` : baseLabel;
+
+  return {
+    source,
+    market,
+    observationTypeLabel,
+    valueText,
+    displayLabel,
+  };
+}

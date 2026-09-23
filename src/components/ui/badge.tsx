@@ -8,25 +8,25 @@ const badgeVariants = cva(
     variants: {
       variant: {
         default:
-          'border-transparent bg-primary/20 text-primary-foreground border-primary/30',
+          'border-transparent bg-primary text-primary-foreground',
         secondary:
           'border-border bg-secondary text-secondary-foreground',
         outline:
-          'border-border text-muted-foreground',
+          'border-border bg-white text-muted-foreground',
         supporting:
-          'border-emerald-500/30 bg-emerald-950/40 text-emerald-400',
+          'border-emerald-200/90 bg-emerald-50 text-emerald-800',
         contradicting:
-          'border-amber-500/30 bg-amber-950/40 text-amber-300',
+          'border-amber-200/90 bg-amber-50 text-amber-900',
         dissent:
-          'border-amber-500/30 bg-amber-950/40 text-amber-300',
+          'border-amber-200/90 bg-amber-50 text-amber-900',
         destructive:
-          'border-rose-500/40 bg-rose-950/50 text-rose-300',
+          'border-rose-200/90 bg-rose-50 text-rose-800',
         neutral:
-          'border-neutral-800 bg-neutral-900/60 text-neutral-400',
+          'border-stone-200 bg-stone-100 text-stone-700',
         highlight:
-          'border-sky-500/30 bg-sky-950/40 text-sky-300',
+          'border-sky-200/90 bg-sky-50 text-sky-800',
         warning:
-          'border-amber-500/30 bg-amber-950/40 text-amber-300',
+          'border-amber-200/90 bg-amber-50 text-amber-900',
       },
     },
     defaultVariants: {

@@ -9,19 +9,19 @@ const buttonVariants = cva(
     variants: {
       variant: {
         default:
-          'bg-emerald-600 text-white shadow-sm hover:bg-emerald-500 active:bg-emerald-700',
+          'bg-zinc-900 text-zinc-50 shadow-xs hover:bg-zinc-800 active:bg-zinc-950',
         destructive:
-          'bg-rose-600 text-white shadow-sm hover:bg-rose-500 active:bg-rose-700',
+          'bg-rose-700 text-white shadow-xs hover:bg-rose-600 active:bg-rose-800',
         outline:
-          'border border-border bg-card/60 text-foreground shadow-xs hover:bg-accent hover:text-accent-foreground hover:border-muted-foreground/30',
+          'border border-border bg-white text-foreground shadow-xs hover:bg-zinc-50 hover:text-foreground hover:border-zinc-300',
         secondary:
-          'bg-secondary text-secondary-foreground shadow-xs hover:bg-accent hover:text-accent-foreground',
+          'bg-secondary text-secondary-foreground shadow-xs hover:bg-zinc-200/80 hover:text-foreground',
         ghost:
-          'text-muted-foreground hover:bg-accent hover:text-foreground active:bg-accent/80',
+          'text-muted-foreground hover:bg-secondary hover:text-foreground active:bg-secondary/80',
         link:
-          'text-primary underline-offset-4 hover:underline active:scale-100',
+          'text-foreground underline-offset-4 hover:underline active:scale-100 font-medium',
         subtle:
-          'bg-muted/70 text-foreground hover:bg-muted active:bg-muted/90 border border-border/50',
+          'bg-secondary/80 text-foreground hover:bg-secondary active:bg-secondary/90 border border-border/70',
       },
       size: {
         default: 'h-9 px-4 py-2 text-sm',

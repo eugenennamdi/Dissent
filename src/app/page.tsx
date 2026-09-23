@@ -24,6 +24,11 @@ import { ResearchPending } from '@/components/ResearchPending';
 import { BriefView } from '@/components/BriefView';
 import { ResearchHistoryDrawer } from '@/components/ResearchHistoryDrawer';
 
+import {
+  PROTOTYPE_BRIEF,
+  PROTOTYPE_ADVOCATE_CASE,
+} from './prototype/prototype-fixture';
+
 export default function Home() {
   const [view, setView] = useState<'COMPOSE' | 'RESEARCH' | 'BRIEF'>('COMPOSE');
   const [activeThesis, setActiveThesis] = useState('');
@@ -44,6 +49,31 @@ export default function Home() {
   // Rehydrate latest saved research run on initial load
   useEffect(() => {
     const handle = requestAnimationFrame(() => {
+      const urlParams =
+        typeof window !== 'undefined'
+          ? new URLSearchParams(window.location.search)
+          : null;
+      if (urlParams?.get('demo') === '1' || urlParams?.get('preview') === '1') {
+        setActiveRun({
+          runId: PROTOTYPE_BRIEF.runId,
+          thesisId: PROTOTYPE_BRIEF.structuredThesis.id,
+          brief: PROTOTYPE_BRIEF,
+          advocateCase: PROTOTYPE_ADVOCATE_CASE,
+          timingsMs: {
+            structuring: 420,
+            marketResearch: 810,
+            argumentation: 1150,
+            stressTesting: 920,
+            synthesis: 560,
+            total: 3860,
+          },
+          savedAt: new Date().toISOString(),
+        });
+        setActiveThesis(PROTOTYPE_BRIEF.originalThesis);
+        setView('BRIEF');
+        return;
+      }
+
       const runs = loadStoredRuns();
       setHistoryRuns(runs);
 
@@ -235,14 +265,16 @@ export default function Home() {
   };
 
   return (
-    <div className="min-h-screen bg-[#0a0c10] text-[#e6edf3] flex flex-col font-sans selection:bg-[#58a6ff]/30 selection:text-white">
-      {/* Top Workspace Header */}
-      <WorkstationHeader
-        currentView={view}
-        onNewThesis={handleNewThesis}
-        onOpenHistory={() => setIsHistoryOpen(true)}
-        historyCount={historyRuns.length}
-      />
+    <div className="min-h-screen bg-background text-foreground flex flex-col font-sans selection:bg-stone-200 selection:text-stone-900">
+      {/* Top Workspace Header - hidden in Brief view which has its own memo masthead */}
+      {view !== 'BRIEF' && (
+        <WorkstationHeader
+          currentView={view}
+          onNewThesis={handleNewThesis}
+          onOpenHistory={() => setIsHistoryOpen(true)}
+          historyCount={historyRuns.length}
+        />
+      )}
 
       {/* Main Workspace Body */}
       <main className="flex-1 flex flex-col">
@@ -266,6 +298,9 @@ export default function Home() {
             onSubmitDecision={handleDecisionSubmit}
             isSubmittingDecision={isSubmittingDecision}
             decisionError={decisionError}
+            onNewThesis={handleNewThesis}
+            onOpenHistory={() => setIsHistoryOpen(true)}
+            historyCount={historyRuns.length}
           />
         )}
       </main>

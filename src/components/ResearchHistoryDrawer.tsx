@@ -1,8 +1,20 @@
 'use client';
 
-import React from 'react';
+import React, { useState } from 'react';
 import type { StoredResearchRunV1 } from '@/lib/storage/local-brief-store';
 import { formatUtcDateTime } from '@/lib/formatters/market-formatters';
+import {
+  History,
+  X,
+  Shield,
+  Trash2,
+  Clock,
+  ExternalLink,
+  ChevronRight,
+  Layers,
+  ShieldAlert,
+} from 'lucide-react';
+import { cn } from '@/lib/utils';
 
 interface ResearchHistoryDrawerProps {
   isOpen: boolean;
@@ -14,6 +26,21 @@ interface ResearchHistoryDrawerProps {
   onClearAll: () => void;
 }
 
+function formatDirection(direction?: string): string {
+  if (!direction) return '';
+  return direction
+    .replace(/_/g, ' ')
+    .toLowerCase()
+    .replace(/\b(eth|btc|sol|usdt|usdc)\b/g, (match) => match.toUpperCase())
+    .replace(/\b(long|short)\b/g, (match) => match.charAt(0).toUpperCase() + match.slice(1));
+}
+
+function formatShortRunId(id: string): string {
+  const clean = id.replace(/^run_/, '');
+  if (clean.length <= 10) return `#run_${clean}`;
+  return `#run_${clean.slice(0, 6)}…${clean.slice(-4)}`;
+}
+
 export function ResearchHistoryDrawer({
   isOpen,
   onClose,
@@ -23,6 +50,8 @@ export function ResearchHistoryDrawer({
   onDeleteRun,
   onClearAll,
 }: ResearchHistoryDrawerProps) {
+  const [confirmClear, setConfirmClear] = useState(false);
+
   if (!isOpen) return null;
 
   return (
@@ -30,107 +59,169 @@ export function ResearchHistoryDrawer({
       role="dialog"
       aria-modal="true"
       aria-labelledby="history-drawer-title"
-      className="fixed inset-0 z-50 flex justify-end bg-black/70 backdrop-blur-sm"
+      className="fixed inset-0 z-50 flex justify-end bg-stone-900/40 backdrop-blur-xs transition-opacity animate-in fade-in duration-200"
       onClick={onClose}
     >
       <div
-        className="w-full max-w-md bg-[#161b22] border-l border-[#30363d] h-full shadow-2xl p-6 flex flex-col justify-between overflow-y-auto space-y-6"
+        className="w-full max-w-md bg-white border-l border-stone-200 h-full shadow-2xl flex flex-col justify-between overflow-y-auto text-stone-900 animate-in slide-in-from-right duration-200"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="space-y-4">
+        <div className="p-5 sm:p-6 space-y-4">
           {/* Header */}
-          <div className="flex items-center justify-between border-b border-[#21262d] pb-4">
-            <div>
-              <h3 id="history-drawer-title" className="text-base font-semibold text-white font-sans">
+          <div className="flex items-center justify-between border-b border-stone-200/80 pb-3.5">
+            <div className="flex items-center gap-2">
+              <h3 id="history-drawer-title" className="text-sm font-semibold text-stone-900 font-sans tracking-tight">
                 Research History
               </h3>
-              <p className="text-xs font-mono text-[#7d8590] mt-0.5">
-                Browser-local persistence ({runs.length} stored)
-              </p>
+              <span className="font-mono text-[10px] font-semibold text-stone-600 bg-stone-100 border border-stone-200/90 px-2 py-0.5 rounded-full">
+                {runs.length}
+              </span>
             </div>
 
             <button
               type="button"
               onClick={onClose}
-              className="p-1.5 rounded bg-[#21262d] hover:bg-[#30363d] text-[#8b949e] hover:text-white transition-colors cursor-pointer text-xs font-mono"
+              className="p-1 rounded-md text-stone-400 hover:text-stone-700 hover:bg-stone-100 transition-colors cursor-pointer"
               aria-label="Close history drawer"
             >
-              ✕
+              <X className="w-4 h-4" />
             </button>
-          </div>
-
-          {/* Privacy / Local Storage Notice */}
-          <div className="p-3 rounded bg-[#0d0f12] border border-[#21262d] text-[11px] font-mono text-[#7d8590] leading-relaxed">
-            Runs are persisted solely in your browser. The backend is stateless; no cloud copies or cross-device recovery exist.
           </div>
 
           {/* Runs List */}
           {runs.length === 0 ? (
-            <div className="py-12 text-center text-xs font-mono text-[#7d8590]">
-              No research runs stored yet.
+            <div className="py-16 text-center space-y-3">
+              <div className="w-10 h-10 rounded-full bg-stone-100 border border-stone-200 flex items-center justify-center mx-auto text-stone-400">
+                <History className="w-5 h-5" />
+              </div>
+              <div className="space-y-1">
+                <p className="text-sm font-semibold text-stone-800">No research runs stored yet</p>
+                <p className="text-xs text-stone-500 max-w-xs mx-auto leading-relaxed">
+                  Your thesis evaluations and stress-test briefs will automatically persist here.
+                </p>
+              </div>
             </div>
           ) : (
-            <div className="space-y-3">
+            <div className="space-y-2.5">
               {runs.map((item) => {
                 const isActive = item.runId === activeRunId;
                 const decision = item.brief.humanDecision?.decision;
+                const thesis = item.brief.structuredThesis;
+                const evidenceCount = item.brief.evidenceLedger.summary.totalCount;
+                const conditionCount = item.brief.invalidationConditions.length;
 
                 return (
                   <div
                     key={item.runId}
+                    role="button"
+                    tabIndex={0}
                     onClick={() => {
                       onSelectRun(item);
                       onClose();
                     }}
-                    className={`p-3.5 rounded-lg border transition-all cursor-pointer space-y-2 ${
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        onSelectRun(item);
+                        onClose();
+                      }
+                    }}
+                    className={cn(
+                      'p-3.5 sm:p-4 rounded-xl border transition-all cursor-pointer space-y-2.5 text-left relative group select-none shadow-2xs',
                       isActive
-                        ? 'border-[#58a6ff] bg-[#1c2128]'
-                        : 'border-[#30363d] bg-[#0d0f12] hover:border-[#484f58]'
-                    }`}
+                        ? 'border-stone-900 bg-stone-50/70 ring-1 ring-stone-900/10'
+                        : 'border-stone-200 bg-white hover:border-stone-400 hover:shadow-xs'
+                    )}
                   >
-                    <div className="flex items-center justify-between text-xs font-mono">
-                      <span className="text-white font-semibold">
-                        {item.brief.structuredThesis.market}
-                      </span>
-                      <div className="flex items-center gap-1.5">
+                    {/* Top Row: Market, Direction, Decision Badge & Actions */}
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-1.5 flex-wrap min-w-0">
+                        <span className="font-mono text-xs font-bold text-stone-900">
+                          {thesis.market}
+                        </span>
+                        {isActive && (
+                          <span className="font-mono text-[9px] font-bold tracking-wider uppercase px-1.5 py-0.2 rounded bg-stone-900 text-stone-100">
+                            Active
+                          </span>
+                        )}
+                        {thesis.direction && (
+                          <span className="text-[11px] font-mono text-stone-500 truncate">
+                            · {formatDirection(thesis.direction)}
+                          </span>
+                        )}
+                      </div>
+
+                      <div className="flex items-center gap-1 shrink-0">
                         {decision ? (
                           <span
-                            className={`px-1.5 py-0.2 rounded text-[10px] font-bold border ${
+                            className={cn(
+                              'px-2 py-0.5 rounded-full text-[10px] font-mono font-bold tracking-wider uppercase border',
                               decision === 'PROCEED'
-                                ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30'
+                                ? 'bg-emerald-50 text-emerald-800 border-emerald-200/90'
                                 : decision === 'WATCH'
-                                  ? 'bg-amber-500/10 text-amber-400 border-amber-500/30'
-                                  : 'bg-rose-500/10 text-rose-400 border-rose-500/30'
-                            }`}
+                                  ? 'bg-amber-50 text-amber-800 border-amber-200/90'
+                                  : 'bg-rose-50 text-rose-800 border-rose-200/90'
+                            )}
                           >
                             {decision}
                           </span>
                         ) : (
-                          <span className="px-1.5 py-0.2 rounded text-[10px] bg-neutral-800 text-neutral-400 border border-neutral-700">
+                          <span className="px-2 py-0.5 rounded-full text-[10px] font-mono font-medium tracking-wide bg-stone-100 text-stone-600 border border-stone-200">
                             Undecided
                           </span>
                         )}
+
                         <button
                           type="button"
                           onClick={(e) => {
                             e.stopPropagation();
                             onDeleteRun(item.runId);
                           }}
-                          className="text-[#7d8590] hover:text-rose-400 p-1 text-[11px] cursor-pointer"
+                          className="opacity-40 group-hover:opacity-100 p-1 rounded-md text-stone-400 hover:text-rose-600 hover:bg-rose-50 transition-all cursor-pointer ml-0.5"
                           title="Delete run from local storage"
+                          aria-label={`Delete run ${item.runId}`}
                         >
-                          ✕
+                          <Trash2 className="w-3.5 h-3.5" />
                         </button>
                       </div>
                     </div>
 
-                    <div className="text-xs text-[#c9d1d9] font-sans line-clamp-2 italic">
-                      &ldquo;{item.brief.originalThesis}&rdquo;
+                    {/* Thesis Conviction Statement */}
+                    <p className="text-xs text-stone-800 font-sans font-medium leading-snug line-clamp-2">
+                      {item.brief.originalThesis}
+                    </p>
+
+                    {/* Research Metrics Strip */}
+                    <div className="flex items-center gap-3 text-[11px] font-mono text-stone-500 pt-0.5">
+                      <span className="inline-flex items-center gap-1">
+                        <Layers className="w-3 h-3 text-stone-400" />
+                        {evidenceCount} Evidence
+                      </span>
+                      <span>•</span>
+                      <span className="inline-flex items-center gap-1">
+                        <ShieldAlert className="w-3 h-3 text-stone-400" />
+                        {conditionCount} Triggers
+                      </span>
+                      {thesis.timeHorizon?.description && (
+                        <>
+                          <span>•</span>
+                          <span className="truncate">{thesis.timeHorizon.description}</span>
+                        </>
+                      )}
                     </div>
 
-                    <div className="flex items-center justify-between text-[10px] font-mono text-[#7d8590] pt-1 border-t border-[#1c2128]">
-                      <span>#{item.runId.slice(0, 10)}…</span>
-                      <span>{formatUtcDateTime(item.savedAt)}</span>
+                    {/* Footer: Run ID Chip & Timestamp */}
+                    <div className="flex items-center justify-between text-[10px] font-mono text-stone-400 pt-2 border-t border-stone-100">
+                      <span
+                        title={`Full Run ID: ${item.runId}`}
+                        className="bg-stone-50 px-1.5 py-0.5 rounded border border-stone-200/60"
+                      >
+                        {formatShortRunId(item.runId)}
+                      </span>
+                      <div className="flex items-center gap-1">
+                        <Clock className="w-3 h-3 text-stone-400" />
+                        <span>{formatUtcDateTime(item.savedAt)}</span>
+                      </div>
                     </div>
                   </div>
                 );
@@ -141,15 +232,43 @@ export function ResearchHistoryDrawer({
 
         {/* Footer Actions */}
         {runs.length > 0 && (
-          <div className="pt-4 border-t border-[#21262d] flex justify-between items-center text-xs font-mono">
-            <button
-              type="button"
-              onClick={onClearAll}
-              className="text-rose-400 hover:text-rose-300 hover:underline cursor-pointer"
-            >
-              Clear all history
-            </button>
-            <span className="text-[#7d8590] text-[11px]">Dissent V1</span>
+          <div className="p-4 sm:p-5 border-t border-stone-200 bg-stone-50/60 flex items-center justify-between text-xs font-mono">
+            {confirmClear ? (
+              <div className="flex items-center justify-between w-full gap-2">
+                <span className="text-[11px] text-stone-600 font-medium">Delete all {runs.length} runs?</span>
+                <div className="flex items-center gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onClearAll();
+                      setConfirmClear(false);
+                    }}
+                    className="px-2.5 py-1 rounded bg-rose-600 text-white text-[11px] font-medium hover:bg-rose-700 transition-colors cursor-pointer"
+                  >
+                    Confirm Delete
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setConfirmClear(false)}
+                    className="px-2.5 py-1 rounded bg-white border border-stone-200 text-stone-700 text-[11px] font-medium hover:bg-stone-100 transition-colors cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <>
+                <button
+                  type="button"
+                  onClick={() => setConfirmClear(true)}
+                  className="inline-flex items-center gap-1.5 text-stone-500 hover:text-rose-600 transition-colors cursor-pointer"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                  <span>Clear all history</span>
+                </button>
+                <span className="text-[11px] text-stone-400">Dissent v1</span>
+              </>
+            )}
           </div>
         )}
       </div>

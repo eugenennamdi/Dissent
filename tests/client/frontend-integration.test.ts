@@ -14,7 +14,9 @@ import {
   getEvidenceFreshness,
   getAssumptionStatusStyle,
   getInvalidationUrgencyLabel,
+  formatEvidenceCitation,
 } from '@/lib/formatters/market-formatters';
+import type { AssumptionV1 } from '@/core/contracts/assumption';
 
 describe('Frontend Integration & Contract Guardrails', () => {
   const now = new Date().toISOString();
@@ -321,5 +323,70 @@ describe('Frontend Integration & Contract Guardrails', () => {
     expect(urgency.note).toContain('thesis invalidation');
     expect(urgency.label).not.toContain('SELL');
     expect(urgency.label).not.toContain('Stop Loss');
+  });
+
+  it('formats semantic evidence citations without inventing converted values or unknown units', () => {
+    // 1. Evidence with exact numeric value and unit
+    const citation1 = formatEvidenceCitation(validEvidenceItem);
+    expect(citation1.source).toBe('Bitget');
+    expect(citation1.market).toBe('ETH/USDT');
+    expect(citation1.observationTypeLabel).toBe('24h Vol');
+    expect(citation1.valueText).toBe('1200000000 USD');
+    expect(citation1.displayLabel).toBe('Bitget: ETH/USDT 24h Vol (1200000000 USD)');
+
+    // 2. Evidence with ratio / funding rate without USD unit
+    const fundingEvidence = {
+      ...validEvidenceItem,
+      id: 'ev_funding_01',
+      observation: {
+        ...validEvidenceItem.observation,
+        type: 'FUNDING_RATE' as const,
+      },
+      value: 0.0001,
+      unit: 'RATIO',
+    };
+    const citation2 = formatEvidenceCitation(fundingEvidence);
+    expect(citation2.observationTypeLabel).toBe('Funding Rate');
+    expect(citation2.valueText).toBe('0.0001 RATIO');
+    // Must NOT invent or convert units
+    expect(citation2.displayLabel).toBe('Bitget: ETH/USDT Funding Rate (0.0001 RATIO)');
+
+    // 3. Evidence without value or unit
+    const noValueEvidence = {
+      ...validEvidenceItem,
+      id: 'ev_qual_01',
+      nature: 'QUALITATIVE' as const,
+      value: undefined,
+      unit: undefined,
+    };
+    const citation3 = formatEvidenceCitation(noValueEvidence);
+    expect(citation3.valueText).toBeUndefined();
+    expect(citation3.displayLabel).toBe('Bitget: ETH/USDT 24h Vol');
+  });
+
+  it('derives snapshot metrics strictly from validated artifacts without invented scores', () => {
+    const brief = validBrief;
+
+    // Categorical assumption counts
+    const assumptions: AssumptionV1[] = brief.assumptions;
+    const countSupported = assumptions.filter((a) => a.status === 'SUPPORTED').length;
+    const countQuestioned = assumptions.filter((a) => a.status === 'QUESTIONED').length;
+    const countContradicted = assumptions.filter((a) => a.status === 'CONTRADICTED').length;
+
+    expect(countSupported).toBe(1);
+    expect(countQuestioned).toBe(0);
+    expect(countContradicted).toBe(0);
+
+    // Primary debate points are attributed interpretations
+    const advocatePrimary = validAdvocateCase.points.find((p) => p.weight === 'PRIMARY');
+    const dissentPrimary = brief.theDissent.points.find((p) => p.weight === 'PRIMARY');
+
+    expect(advocatePrimary).toBeDefined();
+    expect(advocatePrimary?.title).toBe('Spot Volume Expansion');
+    expect(dissentPrimary).toBeDefined();
+    expect(dissentPrimary?.title).toBe('BTC Dominance Overhang');
+
+    // Strict invariant: humanDecision is initialized to null
+    expect(brief.humanDecision).toBeNull();
   });
 });
