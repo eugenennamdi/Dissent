@@ -19,22 +19,28 @@ interface ThesisPreset {
 
 const THESIS_PRESETS: ThesisPreset[] = [
   {
-    id: 'eth-btc-momentum',
-    label: 'ETH/BTC Momentum',
-    category: 'Spot & Derivatives',
-    text: 'I think ETH will outperform BTC over the next 48 hours because risk appetite is improving and ETH momentum is strengthening.',
+    id: 'sol-eth-momentum',
+    label: 'SOL/ETH Momentum',
+    category: 'Relative Performance',
+    text: 'I think SOL will outperform ETH over the next 48 hours because relative spot momentum and trading volume continue to favor SOL.',
   },
   {
-    id: 'derivatives-short-squeeze',
-    label: 'Funding Squeeze',
-    category: 'Liquidations',
-    text: 'ETH/BTC will bounce strongly over the next 24-48 hours as short liquidations accelerate and Bitget futures funding rates turn deeply negative.',
+    id: 'eth-btc-reversal',
+    label: 'ETH/BTC Reversal',
+    category: 'Relative Performance',
+    text: 'ETH will outperform BTC over the next 48 hours as the recent return spread stabilizes and relative selling pressure subsides.',
   },
   {
-    id: 'btc-dominance-drag',
-    label: 'BTC Dominance Drag',
-    category: 'Macro Rotation',
-    text: 'ETH will underperform BTC over the next 72 hours as Bitcoin dominance breaks resistance and institutional liquidity consolidates into BTC.',
+    id: 'sol-usdt-breakout',
+    label: 'SOL/USDT Breakout',
+    category: 'Single-Asset Directional',
+    text: 'I think SOL will rally against USDT over the next 24 hours supported by expanding spot volume and positive price momentum.',
+  },
+  {
+    id: 'btc-usdt-pullback',
+    label: 'BTC/USDT Pullback',
+    category: 'Single-Asset Directional',
+    text: 'BTC will pull back against USDT over the next 24 hours as high perpetual funding rates increase carrying costs while spot volume slows.',
   },
 ];
 
@@ -100,7 +106,7 @@ export function ThesisComposer({
           </h1>
 
           <p className="text-sm sm:text-base text-muted-foreground leading-relaxed max-w-2xl mx-auto font-sans text-balance">
-            Dissent extracts your market thesis, pulls verifiable market evidence from Bitget,
+            Dissent extracts your market thesis across BTC, ETH, and SOL markets, pulls verifiable market evidence from Bitget,
             constructs grounded supporting and counter-arguments, and stress-tests underlying assumptions.
           </p>
         </header>
@@ -120,7 +126,7 @@ export function ThesisComposer({
                   if (errorMessage) onClearError();
                 }}
                 onKeyDown={handleKeyDown}
-                placeholder="e.g. I think ETH will outperform BTC over the next 48 hours because risk appetite is improving and ETH momentum is strengthening..."
+                placeholder="e.g. I think SOL will outperform ETH over the next 48 hours on strong relative volume, or BTC will pull back against USDT over the next 24 hours..."
                 className="w-full bg-transparent p-0 text-sm sm:text-base text-foreground placeholder:text-stone-400/75 focus:outline-none resize-none min-h-[100px] font-sans leading-relaxed border-0 focus:ring-0"
                 disabled={isSubmitting}
                 aria-label="Market Thesis"

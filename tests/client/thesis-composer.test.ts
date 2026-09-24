@@ -20,14 +20,17 @@ describe('ThesisComposer Component', () => {
 
     // Masthead & Value Prop
     expect(html).toContain('Stress-test the trade before the market does.');
-    expect(html).toContain('Dissent extracts your market thesis');
+    expect(html).toContain('across BTC, ETH, and SOL markets');
 
     // Composer Input & Presets
     expect(html).toContain('thesis-input');
+    expect(html).toContain('SOL will outperform ETH over the next 48 hours');
+    expect(html).toContain('BTC will pull back against USDT over the next 24 hours');
     expect(html).toContain('Try thesis:');
-    expect(html).toContain('ETH/BTC Momentum');
-    expect(html).toContain('Funding Squeeze');
-    expect(html).toContain('BTC Dominance Drag');
+    expect(html).toContain('SOL/ETH Momentum');
+    expect(html).toContain('ETH/BTC Reversal');
+    expect(html).toContain('SOL/USDT Breakout');
+    expect(html).toContain('BTC/USDT Pullback');
 
     // Action Dock
     expect(html).toContain('5-stage adversarial synthesis (~40s)');
