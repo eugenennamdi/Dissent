@@ -77,11 +77,22 @@ describe('Thesis Contracts & Invariants', () => {
       'BTC/USDT',
       'ETH/USDT',
       'SOL/USDT',
+      'NVDA/USD',
     ]);
     expect(SUPPORTED_THESIS_MARKETS.filter((item) => item.kind === 'RELATIVE')).toHaveLength(6);
     expect(
       SUPPORTED_THESIS_MARKETS.filter((item) => item.kind === 'SINGLE_ASSET')
-    ).toHaveLength(3);
+    ).toHaveLength(4);
+  });
+
+  it('distinguishes crypto versus native equity asset classes', () => {
+    const nvdaMarket = SUPPORTED_THESIS_MARKETS.find((m) => m.market === 'NVDA/USD');
+    expect(nvdaMarket).toBeDefined();
+    expect(nvdaMarket?.assetClass).toBe('EQUITY');
+    expect(nvdaMarket?.kind).toBe('SINGLE_ASSET');
+
+    const btcMarket = SUPPORTED_THESIS_MARKETS.find((m) => m.market === 'BTC/USDT');
+    expect(btcMarket?.assetClass).toBe('CRYPTO');
   });
 
   it.each([
@@ -89,6 +100,8 @@ describe('Thesis Contracts & Invariants', () => {
     { market: 'BTC/USDT', baseAsset: 'BTC', quoteAsset: 'USDT', direction: 'SHORT' },
     { market: 'SOL/BTC', baseAsset: 'SOL', quoteAsset: 'BTC', direction: 'RELATIVE_LONG' },
     { market: 'ETH/SOL', baseAsset: 'ETH', quoteAsset: 'SOL', direction: 'RELATIVE_SHORT' },
+    { market: 'NVDA/USD', baseAsset: 'NVDA', quoteAsset: 'USD', direction: 'LONG' },
+    { market: 'NVDA/USD', baseAsset: 'NVDA', quoteAsset: 'USD', direction: 'SHORT' },
   ] as const)('accepts $market with $direction', (combination) => {
     expect(() =>
       StructuredThesisV1Schema.parse({
@@ -111,6 +124,12 @@ describe('Thesis Contracts & Invariants', () => {
     { market: 'SOL/USDT', baseAsset: 'SOL', quoteAsset: 'USDT', direction: 'RELATIVE_LONG' },
     { market: 'SOL/BTC', baseAsset: 'BTC', quoteAsset: 'SOL', direction: 'RELATIVE_LONG' },
     { market: 'SOL/BTC', baseAsset: 'SOL', quoteAsset: 'BTC', direction: 'LONG' },
+    { market: 'NVDA/USD', baseAsset: 'NVDA', quoteAsset: 'USD', direction: 'RELATIVE_LONG' },
+    { market: 'NVDA/USD', baseAsset: 'NVDA', quoteAsset: 'USD', direction: 'RELATIVE_SHORT' },
+    { market: 'SPY/USD', baseAsset: 'SPY', quoteAsset: 'USD', direction: 'LONG' },
+    { market: 'AAPL/USD', baseAsset: 'AAPL', quoteAsset: 'USD', direction: 'LONG' },
+    { market: 'NVDA/USDT', baseAsset: 'NVDA', quoteAsset: 'USDT', direction: 'LONG' },
+    { market: 'NVDA/BTC', baseAsset: 'NVDA', quoteAsset: 'BTC', direction: 'RELATIVE_LONG' },
   ])('rejects unsupported or inconsistent thesis combination', (combination) => {
     expect(() =>
       StructuredThesisV1Schema.parse({

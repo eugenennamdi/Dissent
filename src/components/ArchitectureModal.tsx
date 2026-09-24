@@ -30,19 +30,19 @@ export const PILLARS: ArchitecturePillar[] = [
     step: '01',
     title: 'Market Facts',
     description:
-      'Ingests live Bitget V3 spot & futures tickers, funding rates, open interest, and orderbook depth. Raw observations are parsed with bounded freshness and zero hallucinated metrics.',
+      'Ingests verified US equity quotes, session volumes, and fundamental valuation multiples via Bitget MCP and market data endpoints. Raw observations are parsed with bounded freshness and zero hallucinated metrics.',
     points: [
       {
-        label: 'Bitget V3 Public Endpoints',
-        detail: 'Real-time spot tickers, perpetual funding rates, and 20-level orderbook depth.',
+        label: 'Bitget MCP & Market Services',
+        detail: 'Native US equity quotes (NVDA/USD), session volume, market capitalization, and fundamental valuation ratios.',
       },
       {
-        label: 'Cryptographic Provenance',
-        detail: 'Every piece of evidence receives a deterministic SHA-256 hash upon ingestion.',
+        label: 'Deterministic Record Hashes',
+        detail: 'Source-attributed evidence records are assigned deterministic SHA-256 hashes upon ingestion to preserve provenance and track state changes.',
       },
       {
         label: 'Read-Only Security',
-        detail: 'Zero API keys required. Operates with zero execution or custodial risk.',
+        detail: 'Zero trading keys or execution tools. Operates with zero trade-execution or custodial risk.',
       },
     ],
   },
@@ -54,7 +54,7 @@ export const PILLARS: ArchitecturePillar[] = [
     points: [
       {
         label: 'Dual-Desk Construct',
-        detail: 'Advocate builds supporting thesis; Dissenter attacks vulnerabilities and tail risks.',
+        detail: 'Advocate builds supporting thesis; Dissenter attacks valuation vulnerabilities and tail risks.',
       },
       {
         label: 'Assumption Testing',
@@ -62,7 +62,7 @@ export const PILLARS: ArchitecturePillar[] = [
       },
       {
         label: 'Causal Shock Scenarios',
-        detail: 'Models liquidity shocks, correlation breakdowns, and funding squeezes before capital is risked.',
+        detail: 'Models valuation compression, demand deceleration, and capex contraction before capital is risked.',
       },
     ],
   },

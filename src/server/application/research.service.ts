@@ -9,7 +9,7 @@ import {
 import { DeepSeekAnalystAdapter } from '@/server/ai/deepseek-analyst.adapter';
 import { DeepSeekResponsesClient } from '@/server/ai/deepseek-responses.client';
 import type { StructuredModelPort } from '@/server/ai/structured-model.port';
-import { BitgetMarketAdapter } from '@/server/market/bitget.adapter';
+import { CompositeMarketAdapter } from '@/server/market/composite-market.adapter';
 import type { MarketDeskPort } from '@/server/market/market-desk.port';
 import { IntelligenceLoop } from '@/server/orchestration/intelligence-loop';
 
@@ -38,7 +38,7 @@ export async function executeResearchSubmission(
   });
   const loop = new IntelligenceLoop({
     ai,
-    marketDesk: dependencies.marketDesk ?? new BitgetMarketAdapter(),
+    marketDesk: dependencies.marketDesk ?? new CompositeMarketAdapter(),
     now: dependencies.timer,
     marketQuery: { lookbackHours: 48, includeFutures: true },
   });

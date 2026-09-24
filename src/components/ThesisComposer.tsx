@@ -19,28 +19,22 @@ interface ThesisPreset {
 
 const THESIS_PRESETS: ThesisPreset[] = [
   {
-    id: 'sol-eth-momentum',
-    label: 'SOL/ETH Momentum',
-    category: 'Relative Performance',
-    text: 'I think SOL will outperform ETH over the next 48 hours because relative spot momentum and trading volume continue to favor SOL.',
+    id: 'nvda-valuation-expansion',
+    label: 'NVDA Valuation Support',
+    category: 'US Equity Research',
+    text: 'NVDA will sustain its upward price trajectory over the next 90 days as trading volume and total market capitalization continue to support elevated valuation multiples.',
   },
   {
-    id: 'eth-btc-reversal',
-    label: 'ETH/BTC Reversal',
-    category: 'Relative Performance',
-    text: 'ETH will outperform BTC over the next 48 hours as the recent return spread stabilizes and relative selling pressure subsides.',
+    id: 'nvda-multiple-compression',
+    label: 'NVDA Multiple Compression',
+    category: 'US Equity Research',
+    text: 'NVDA will face price pullbacks over the next 60 days as premium price-to-earnings and price-to-sales ratios become vulnerable to decelerating session volume.',
   },
   {
-    id: 'sol-usdt-breakout',
-    label: 'SOL/USDT Breakout',
-    category: 'Single-Asset Directional',
-    text: 'I think SOL will rally against USDT over the next 24 hours supported by expanding spot volume and positive price momentum.',
-  },
-  {
-    id: 'btc-usdt-pullback',
-    label: 'BTC/USDT Pullback',
-    category: 'Single-Asset Directional',
-    text: 'BTC will pull back against USDT over the next 24 hours as high perpetual funding rates increase carrying costs while spot volume slows.',
+    id: 'nvda-session-momentum',
+    label: 'NVDA Session Momentum',
+    category: 'US Equity Research',
+    text: 'NVDA will extend its positive session momentum over the next 30 days supported by trading volume and stable enterprise valuation multiples.',
   },
 ];
 
@@ -106,7 +100,7 @@ export function ThesisComposer({
           </h1>
 
           <p className="text-sm sm:text-base text-muted-foreground leading-relaxed max-w-2xl mx-auto font-sans text-balance">
-            Dissent extracts your market thesis across BTC, ETH, and SOL markets, pulls verifiable market evidence from Bitget,
+            Dissent extracts your market thesis for native US equities (NVDA/USD), pulls verifiable market quotes and fundamental valuation ratios from Bitget,
             constructs grounded supporting and counter-arguments, and stress-tests underlying assumptions.
           </p>
         </header>
@@ -126,7 +120,7 @@ export function ThesisComposer({
                   if (errorMessage) onClearError();
                 }}
                 onKeyDown={handleKeyDown}
-                placeholder="e.g. I think SOL will outperform ETH over the next 48 hours on strong relative volume, or BTC will pull back against USDT over the next 24 hours..."
+                placeholder="e.g. NVDA will sustain its upward valuation trajectory over the next 90 days as strong market capitalization and trading volume support current earnings multiples..."
                 className="w-full bg-transparent p-0 text-sm sm:text-base text-foreground placeholder:text-stone-400/75 focus:outline-none resize-none min-h-[100px] font-sans leading-relaxed border-0 focus:ring-0"
                 disabled={isSubmitting}
                 aria-label="Market Thesis"
@@ -244,7 +238,7 @@ export function ThesisComposer({
         </button>
 
         <div className="text-xs text-stone-400 font-sans">
-          Powered by <span className="font-medium text-stone-600">Bitget V3 API</span>
+          Powered by <span className="font-medium text-stone-600">Bitget MCP & Market Services</span>
         </div>
       </footer>
 

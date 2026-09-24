@@ -305,4 +305,254 @@ describe('Evidence & EvidenceLedger Contracts', () => {
       })
     ).toThrow(DissentError);
   });
+
+  describe('Phase 1: Native US-Equity Evidence Contracts (NVDA/USD)', () => {
+    it('validates native equity quote evidence with unknown observation time without fabricating freshness', () => {
+      const nvdaQuote = EvidenceV1Schema.parse({
+        id: 'ev_nvda_quote_1',
+        thesisId: 'th_nvda_1',
+        claim: 'NVDA latest session price is 222.9272 USD',
+        category: 'PRICE_ACTION',
+        stance: 'NEUTRAL',
+        nature: 'NUMERIC',
+        observation: {
+          type: 'LAST_PRICE',
+          market: 'NVDA/USD',
+          instrumentType: 'EQUITY_CASH',
+          providerSymbol: 'NVDA',
+        },
+        provenance: {
+          sourceName: 'bitget-mcp-server',
+          sourceType: 'EXCHANGE_API',
+          endpointOrLocator: 'https://agent.bitget.com/mcp',
+          observedAt: null,
+          retrievedAt: '2026-09-24T12:00:00.000Z',
+          freshnessMode: 'UNKNOWN_OBSERVATION_TIME',
+        },
+        value: 222.9272,
+        unit: 'USD',
+        verifiable: true,
+        schemaVersion: 1,
+      });
+
+      expect(nvdaQuote.observation.instrumentType).toBe('EQUITY_CASH');
+      expect(nvdaQuote.observation.market).toBe('NVDA/USD');
+      expect(nvdaQuote.provenance.observedAt).toBeNull();
+      expect(nvdaQuote.provenance.freshnessMode).toBe('UNKNOWN_OBSERVATION_TIME');
+
+      const freshness = deriveEvidenceFreshness(nvdaQuote, '2026-09-24T12:00:10.000Z');
+      expect(freshness.level).toBe('UNKNOWN');
+      expect(freshness.ageSeconds).toBeNull();
+      expect(freshness.isStale).toBe(false);
+      expect(freshness.level).not.toBe('REALTIME');
+      expect(freshness.level).not.toBe('RECENT');
+    });
+
+    it('rejects unknown observation time if observedAt is supplied or mode is mismatched', () => {
+      expect(() =>
+        EvidenceV1Schema.parse({
+          id: 'ev_nvda_bad_prov_1',
+          thesisId: 'th_nvda_1',
+          claim: 'NVDA price quote',
+          category: 'PRICE_ACTION',
+          stance: 'NEUTRAL',
+          nature: 'NUMERIC',
+          observation: {
+            type: 'LAST_PRICE',
+            market: 'NVDA/USD',
+            instrumentType: 'EQUITY_CASH',
+            providerSymbol: 'NVDA',
+          },
+          provenance: {
+            sourceName: 'bitget-mcp-server',
+            sourceType: 'EXCHANGE_API',
+            endpointOrLocator: 'https://agent.bitget.com/mcp',
+            observedAt: '2026-09-24T12:00:00.000Z',
+            retrievedAt: '2026-09-24T12:00:00.000Z',
+            freshnessMode: 'UNKNOWN_OBSERVATION_TIME', // Mismatch: has observedAt but mode is UNKNOWN_OBSERVATION_TIME
+          },
+          value: 222.9272,
+          unit: 'USD',
+          schemaVersion: 1,
+        })
+      ).toThrow();
+
+      expect(() =>
+        EvidenceV1Schema.parse({
+          id: 'ev_nvda_bad_prov_2',
+          thesisId: 'th_nvda_1',
+          claim: 'NVDA price quote',
+          category: 'PRICE_ACTION',
+          stance: 'NEUTRAL',
+          nature: 'NUMERIC',
+          observation: {
+            type: 'LAST_PRICE',
+            market: 'NVDA/USD',
+            instrumentType: 'EQUITY_CASH',
+            providerSymbol: 'NVDA',
+          },
+          provenance: {
+            sourceName: 'bitget-mcp-server',
+            sourceType: 'EXCHANGE_API',
+            endpointOrLocator: 'https://agent.bitget.com/mcp',
+            observedAt: null, // Mismatch: observedAt is null but mode is AGE_SINCE_OBSERVATION
+            retrievedAt: '2026-09-24T12:00:00.000Z',
+            freshnessMode: 'AGE_SINCE_OBSERVATION',
+          },
+          value: 222.9272,
+          unit: 'USD',
+          schemaVersion: 1,
+        })
+      ).toThrow();
+    });
+
+    it('validates valuation metrics with genuine source timestamps and reporting period', () => {
+      const peTtm = EvidenceV1Schema.parse({
+        id: 'ev_nvda_pe_ttm',
+        thesisId: 'th_nvda_1',
+        claim: 'NVDA trailing twelve-month P/E ratio is 28.597x for period ending 2026-09-23',
+        category: 'VALUATION_METRIC',
+        stance: 'SUPPORTING',
+        nature: 'NUMERIC',
+        observation: {
+          type: 'VALUATION_PE_TTM',
+          market: 'NVDA/USD',
+          instrumentType: 'EQUITY_CASH',
+          providerSymbol: 'NVDA',
+          reportingPeriod: '2026-09-23',
+        },
+        provenance: {
+          sourceName: 'bitget-mcp-server',
+          sourceType: 'PRIMARY_DOCUMENT',
+          endpointOrLocator: 'https://agent.bitget.com/mcp',
+          observedAt: '2026-09-23T00:00:00.000Z',
+          retrievedAt: '2026-09-24T12:00:00.000Z',
+          freshnessMode: 'HISTORICAL_RECORD',
+        },
+        value: 28.597,
+        unit: 'RATIO',
+        verifiable: true,
+        schemaVersion: 1,
+      });
+
+      expect(peTtm.category).toBe('VALUATION_METRIC');
+      expect(peTtm.observation.type).toBe('VALUATION_PE_TTM');
+      expect(peTtm.observation.reportingPeriod).toBe('2026-09-23');
+      expect(peTtm.provenance.observedAt).toBe('2026-09-23T00:00:00.000Z');
+
+      const freshness = deriveEvidenceFreshness(peTtm, '2026-09-24T12:00:00.000Z');
+      expect(freshness.level).toBe('HISTORICAL');
+      expect(freshness.isStale).toBe(false);
+    });
+
+    it('permits legitimate optional-valuation gaps while preserving ledger integrity', () => {
+      const quotePrice: EvidenceV1 = {
+        id: 'ev_nvda_price',
+        thesisId: 'th_nvda_ledger',
+        claim: 'NVDA session close is 222.9272 USD',
+        category: 'PRICE_ACTION',
+        stance: 'NEUTRAL',
+        nature: 'NUMERIC',
+        observation: {
+          type: 'LAST_PRICE',
+          market: 'NVDA/USD',
+          instrumentType: 'EQUITY_CASH',
+          providerSymbol: 'NVDA',
+        },
+        provenance: {
+          sourceName: 'bitget-mcp-server',
+          sourceType: 'EXCHANGE_API',
+          endpointOrLocator: 'https://agent.bitget.com/mcp',
+          observedAt: null,
+          retrievedAt: '2026-09-24T12:00:00.000Z',
+          freshnessMode: 'UNKNOWN_OBSERVATION_TIME',
+        },
+        value: 222.9272,
+        unit: 'USD',
+        derivedFromEvidenceIds: [],
+        relatedAssumptionIds: [],
+        verifiable: true,
+        schemaVersion: 1,
+      };
+
+      const sessionChange: EvidenceV1 = {
+        id: 'ev_nvda_change',
+        thesisId: 'th_nvda_ledger',
+        claim: 'NVDA session return vs prev_close is -0.94%',
+        category: 'PRICE_ACTION',
+        stance: 'CONTRADICTING',
+        nature: 'NUMERIC',
+        observation: {
+          type: 'SESSION_PRICE_CHANGE',
+          market: 'NVDA/USD',
+          instrumentType: 'EQUITY_CASH',
+          providerSymbol: 'NVDA',
+        },
+        provenance: {
+          sourceName: 'bitget-mcp-server',
+          sourceType: 'EXCHANGE_API',
+          endpointOrLocator: 'https://agent.bitget.com/mcp',
+          observedAt: null,
+          retrievedAt: '2026-09-24T12:00:00.000Z',
+          freshnessMode: 'UNKNOWN_OBSERVATION_TIME',
+        },
+        value: -0.93925,
+        unit: 'PERCENT',
+        derivedFromEvidenceIds: [],
+        relatedAssumptionIds: [],
+        verifiable: true,
+        schemaVersion: 1,
+      };
+
+      const peTtm: EvidenceV1 = {
+        id: 'ev_nvda_pe_ttm',
+        thesisId: 'th_nvda_ledger',
+        claim: 'NVDA trailing twelve-month P/E ratio is 28.597x',
+        category: 'VALUATION_METRIC',
+        stance: 'SUPPORTING',
+        nature: 'NUMERIC',
+        observation: {
+          type: 'VALUATION_PE_TTM',
+          market: 'NVDA/USD',
+          instrumentType: 'EQUITY_CASH',
+          providerSymbol: 'NVDA',
+          reportingPeriod: '2026-09-23',
+        },
+        provenance: {
+          sourceName: 'bitget-mcp-server',
+          sourceType: 'PRIMARY_DOCUMENT',
+          endpointOrLocator: 'https://agent.bitget.com/mcp',
+          observedAt: '2026-09-23T00:00:00.000Z',
+          retrievedAt: '2026-09-24T12:00:00.000Z',
+          freshnessMode: 'HISTORICAL_RECORD',
+        },
+        value: 28.597,
+        unit: 'RATIO',
+        derivedFromEvidenceIds: [],
+        relatedAssumptionIds: [],
+        verifiable: true,
+        schemaVersion: 1,
+      };
+
+      // Ledger has 3 items (minimum required + 1 valuation ratio).
+      // Optional metrics (VALUATION_PE_LYR, VALUATION_EV_EBITDA, etc.) are absent.
+      const ledger: EvidenceLedgerV1 = {
+        id: 'led_nvda_partial',
+        thesisId: 'th_nvda_ledger',
+        items: [quotePrice, sessionChange, peTtm],
+        summary: {
+          totalCount: 3,
+          supportingCount: 1,
+          contradictingCount: 1,
+          neutralCount: 1,
+          staleCountAtAssembly: 0,
+          categoriesPresent: ['PRICE_ACTION', 'VALUATION_METRIC'],
+        },
+        assembledAt: '2026-09-24T12:00:00.000Z',
+        schemaVersion: 1,
+      };
+
+      expect(() => assertEvidenceLedgerIntegrity(ledger)).not.toThrow();
+    });
+  });
 });

@@ -283,6 +283,12 @@ export class BitgetMarketAdapter implements MarketDeskPort {
       );
     }
 
+    if (definition.assetClass === 'EQUITY') {
+      throw DissentError.unsupportedMarket(rawMarket, {
+        reason: 'Native equity research is handled by the equity market desk',
+      });
+    }
+
     if (definition.kind === 'SINGLE_ASSET') {
       return [this.toUsdtMarket(baseAsset)];
     }

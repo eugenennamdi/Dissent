@@ -32,6 +32,7 @@ interface EvidenceDetailDialogProps {
 function formatCategory(category: string): string {
   const map: Record<string, string> = {
     PRICE_ACTION: 'Price Action',
+    VALUATION_METRIC: 'Valuation Multiple & Metric',
     ORDERBOOK_DEPTH: 'Orderbook Depth',
     FUNDING_RATE: 'Funding Rate',
     OPEN_INTEREST: 'Open Interest',
@@ -50,6 +51,7 @@ function formatInstrumentType(type: string): string {
   const map: Record<string, string> = {
     DERIVED_SPOT_PAIR: 'Synthetic Pair',
     SPOT: 'Spot',
+    EQUITY: 'Native US Equity',
     USDT_FUTURES: 'USDT Futures',
     COIN_FUTURES: 'Coin-M Futures',
     PERPETUAL: 'Perpetual Swap',
@@ -61,7 +63,15 @@ function formatObservationType(type: string): string {
   const map: Record<string, string> = {
     LAST_PRICE: 'Last Traded Price',
     PRICE_CHANGE_24H: '24-Hour Price Change',
+    SESSION_PRICE_CHANGE: 'Session Price Change',
     BASE_VOLUME_24H: '24-Hour Volume',
+    SESSION_VOLUME: 'Session Trading Volume',
+    MARKET_CAPITALIZATION: 'Total Market Capitalization',
+    VALUATION_PE_TTM: 'Trailing Twelve-Month P/E (TTM)',
+    VALUATION_PE_LYR: 'Last Year Reported P/E (LYR)',
+    VALUATION_PB_RATIO: 'Price-to-Book Ratio (P/B)',
+    VALUATION_EV_EBITDA: 'Enterprise Value to EBITDA (EV/EBITDA)',
+    VALUATION_PS_TTM: 'Price-to-Sales Ratio (TTM)',
     CANDLE_OPEN: 'Candle Open',
     CANDLE_CLOSE: 'Candle Close',
     INTERVAL_PRICE_CHANGE: 'Interval Price Change',
@@ -139,6 +149,14 @@ function getEvidenceTabLabel(item: EvidenceV1): string {
   if (type === 'FUNDING_RATE') return `${baseAsset} Funding`;
   if (type === 'OPEN_INTEREST') return `${baseAsset} OI`;
   if (type === 'BASE_VOLUME_24H') return `${baseAsset} Volume`;
+  if (type === 'SESSION_PRICE_CHANGE') return `${baseAsset} Change`;
+  if (type === 'SESSION_VOLUME') return `${baseAsset} Volume`;
+  if (type === 'MARKET_CAPITALIZATION') return `${baseAsset} MCap`;
+  if (type === 'VALUATION_PE_TTM') return `${baseAsset} P/E (TTM)`;
+  if (type === 'VALUATION_PE_LYR') return `${baseAsset} P/E (LYR)`;
+  if (type === 'VALUATION_PB_RATIO') return `${baseAsset} P/B`;
+  if (type === 'VALUATION_EV_EBITDA') return `${baseAsset} EV/EBITDA`;
+  if (type === 'VALUATION_PS_TTM') return `${baseAsset} P/S`;
   return `${baseAsset} ${String(type).replace(/_/g, ' ').toLowerCase()}`;
 }
 
@@ -367,7 +385,16 @@ export function EvidenceDetailDialog({
           <div className="flex items-center justify-between p-3 bg-stone-50/50">
             <span className="text-stone-500 font-medium">Observed At</span>
             <span className="text-stone-900 tabular-nums">
-              {formatUtcDateTime(evidence.provenance.observedAt)}
+              {evidence.provenance.observedAt
+                ? formatUtcDateTime(evidence.provenance.observedAt)
+                : 'Unknown (Source did not provide an observation time)'}
+            </span>
+          </div>
+
+          <div className="flex items-center justify-between p-3 bg-white">
+            <span className="text-stone-500 font-medium">Retrieved At</span>
+            <span className="text-stone-900 tabular-nums">
+              {formatUtcDateTime(evidence.provenance.retrievedAt)}
             </span>
           </div>
 

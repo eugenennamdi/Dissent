@@ -43,6 +43,14 @@ function formatCardValue(ev: EvidenceV1): { formattedValue: string; colorClass?:
     return { formattedValue: `${ev.value} ${unit}`.trim() };
   }
 
+  // Session price change (%)
+  if (obsType === 'SESSION_PRICE_CHANGE') {
+    const sign = rawNum > 0 ? '+' : '';
+    const formatted = `${sign}${rawNum.toFixed(2)}%`;
+    const colorClass = rawNum > 0 ? 'text-emerald-700' : rawNum < 0 ? 'text-rose-700' : 'text-stone-900';
+    return { formattedValue: formatted, colorClass };
+  }
+
   // Format percentages (24h change, interval change, relative return)
   if (obsType === 'PRICE_CHANGE_24H' || obsType === 'INTERVAL_PRICE_CHANGE' || obsType === 'RELATIVE_RETURN') {
     const sign = rawNum > 0 ? '+' : '';
@@ -75,6 +83,32 @@ function formatCardValue(ev: EvidenceV1): { formattedValue: string; colorClass?:
     return { formattedValue: formatted, colorClass: 'text-stone-900' };
   }
 
+  // Session Volume (equity shares)
+  if (obsType === 'SESSION_VOLUME') {
+    const formatted = `${Math.round(rawNum).toLocaleString('en-US')} Shares`;
+    return { formattedValue: formatted, colorClass: 'text-stone-900' };
+  }
+
+  // Total Market Capitalization (USD scale)
+  if (obsType === 'MARKET_CAPITALIZATION') {
+    if (rawNum >= 1e12) {
+      return { formattedValue: `$${(rawNum / 1e12).toFixed(2)}T USD`, colorClass: 'text-stone-900' };
+    }
+    if (rawNum >= 1e9) {
+      return { formattedValue: `$${(rawNum / 1e9).toFixed(2)}B USD`, colorClass: 'text-stone-900' };
+    }
+    if (rawNum >= 1e6) {
+      return { formattedValue: `$${(rawNum / 1e6).toFixed(2)}M USD`, colorClass: 'text-stone-900' };
+    }
+    return { formattedValue: `$${rawNum.toLocaleString('en-US')} USD`, colorClass: 'text-stone-900' };
+  }
+
+  // Valuation Multiples (P/E, P/B, EV/EBITDA, P/S)
+  if (obsType.startsWith('VALUATION_')) {
+    const formatted = `${rawNum.toFixed(2)}x`;
+    return { formattedValue: formatted, colorClass: 'text-stone-900' };
+  }
+
   // 24h Base Volume
   if (obsType === 'BASE_VOLUME_24H') {
     const formatted = `${rawNum.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${unit}`;
@@ -82,7 +116,9 @@ function formatCardValue(ev: EvidenceV1): { formattedValue: string; colorClass?:
   }
 
   // Standard prices
-  const formatted = `${rawNum.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${unit}`;
+  const isUsd = unit === 'USD' || unit === 'USDT';
+  const prefix = isUsd ? '$' : '';
+  const formatted = `${prefix}${rawNum.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${unit}`;
   return { formattedValue: formatted.trim(), colorClass: 'text-stone-900' };
 }
 
@@ -99,8 +135,14 @@ function formatShortEvidenceId(id: string): string {
  * Categorizes source into clean badge labels.
  */
 function getSourceBadge(sourceName: string) {
-  const isBitget = sourceName.toLowerCase().includes('bitget');
-  if (isBitget) {
+  const lower = sourceName.toLowerCase();
+  if (lower.includes('mcp')) {
+    return {
+      label: 'Bitget MCP',
+      badgeClass: 'bg-stone-900 text-stone-100 border-stone-800',
+    };
+  }
+  if (lower.includes('bitget')) {
     return {
       label: 'Bitget',
       badgeClass: 'bg-stone-900 text-stone-100 border-stone-800',
@@ -145,11 +187,27 @@ function getStanceBadge(stance: EvidenceV1['stance']) {
 function formatObservationTypeLabel(type: string): string {
   switch (type) {
     case 'LAST_PRICE':
-      return 'Spot Price';
+      return 'Market Price';
     case 'PRICE_CHANGE_24H':
       return '24h Change';
+    case 'SESSION_PRICE_CHANGE':
+      return 'Session Change';
     case 'BASE_VOLUME_24H':
       return '24h Volume';
+    case 'SESSION_VOLUME':
+      return 'Session Volume';
+    case 'MARKET_CAPITALIZATION':
+      return 'Market Cap';
+    case 'VALUATION_PE_TTM':
+      return 'Trailing P/E (TTM)';
+    case 'VALUATION_PE_LYR':
+      return 'Last Year P/E (LYR)';
+    case 'VALUATION_PB_RATIO':
+      return 'Price-to-Book (P/B)';
+    case 'VALUATION_EV_EBITDA':
+      return 'EV / EBITDA';
+    case 'VALUATION_PS_TTM':
+      return 'Price-to-Sales (TTM)';
     case 'CANDLE_OPEN':
       return '1H Candle Open';
     case 'CANDLE_CLOSE':
@@ -187,7 +245,8 @@ function formatClaimText(claim: string): string {
 /**
  * Formats timestamp to UTC time string.
  */
-function formatObservedTime(isoString: string): string {
+function formatObservedTime(isoString: string | null): string {
+  if (!isoString) return 'Unknown';
   try {
     const d = new Date(isoString);
     if (isNaN(d.getTime())) return isoString;
@@ -274,7 +333,7 @@ export function EvidenceLedgerView({
             Full Verifiable Evidence Ledger
           </h2>
           <p className="text-xs text-stone-500 max-w-2xl leading-relaxed">
-            All {ledger.summary.totalCount} empirical observations gathered from Bitget V3 APIs and deterministic desk analytics. Every observation is cryptographically grounded in verifiable market state.
+            All {ledger.summary.totalCount} empirical observations gathered from Bitget MCP services and deterministic desk analytics. Every observation is cryptographically grounded in verifiable market state.
           </p>
         </div>
 
@@ -546,7 +605,11 @@ export function EvidenceLedgerView({
                 <div className="pt-2.5 border-t border-stone-100 flex items-center justify-between text-[11px] font-mono text-stone-400 gap-2">
                   <div className="flex items-center gap-1.5 truncate">
                     <Clock className="w-3 h-3 text-stone-400 shrink-0" />
-                    <span className="truncate">Observed: {formatObservedTime(ev.provenance.observedAt)}</span>
+                    <span className="truncate">
+                      {ev.provenance.observedAt
+                        ? `Observed: ${formatObservedTime(ev.provenance.observedAt)}`
+                        : `Observed: Unknown (Retrieved ${formatObservedTime(ev.provenance.retrievedAt)})`}
+                    </span>
                   </div>
 
                   <div className="flex items-center gap-2 shrink-0">

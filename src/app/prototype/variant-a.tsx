@@ -523,7 +523,7 @@ export function VariantA({
                     {ev.claim}
                   </p>
                   <div className="flex items-center justify-between pt-2 text-[11px] font-mono border-t border-zinc-800/60">
-                    <span className="text-zinc-400">Observed: {new Date(ev.provenance.observedAt).toLocaleTimeString()}</span>
+                    <span className="text-zinc-400">Observed: {ev.provenance.observedAt ? new Date(ev.provenance.observedAt).toLocaleTimeString() : 'Unknown'}</span>
                     <span className="text-zinc-300 font-bold">{String(ev.value)} {ev.unit}</span>
                   </div>
                 </div>

@@ -40,6 +40,18 @@ const SYNTHESIS_COVERAGE_RULES = [
     observationType: 'OPEN_INTEREST' as const,
     subjectPattern: /\bopen[- ]interest\b/i,
   },
+  {
+    observationType: 'MARKET_CAPITALIZATION' as const,
+    subjectPattern: /\bmarket[- ]cap(?:italization)?\b/i,
+  },
+  {
+    observationType: 'SESSION_VOLUME' as const,
+    subjectPattern: /\b(?:session[- ]volume|trading[- ]volume)\b/i,
+  },
+  {
+    observationType: 'VALUATION_PE_TTM' as const,
+    subjectPattern: /\b(?:P\/E|price-to-earnings)\b/i,
+  },
 ] as const;
 
 const DIRECT_ABSENCE_PREFIX_PATTERN =

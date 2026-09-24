@@ -49,8 +49,8 @@ describe('ArchitectureModal & Viewer Components', () => {
     expect(html).toContain('Human Decision');
 
     // Step 01 Content
-    expect(html).toContain('Bitget V3 Public Endpoints');
-    expect(html).toContain('Cryptographic Provenance');
+    expect(html).toContain('Bitget MCP &amp; Market Services');
+    expect(html).toContain('Deterministic Record Hashes');
     expect(html).toContain('Read-Only Security');
 
     // Navigation Controls

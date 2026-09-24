@@ -62,7 +62,7 @@ const NUMERIC_FACT_PATTERN = /(?:[$€£¥]|\b\d+(?:[.,]\d+)?\b|%)/;
 const PROHIBITED_TRADING_LANGUAGE_PATTERNS: readonly RegExp[] = [
   // Direct imperatives aimed at taking or closing a supported-asset position. Requiring
   // a trading object keeps descriptive nouns such as "sell-off" and "buy-side" valid.
-  /^\s*(?:please\s+)?(?:buy|sell)\s+(?:(?:your|the|this)\s+(?:position|asset)|ETH|BTC|SOL)\b/i,
+  /^\s*(?:please\s+)?(?:buy|sell)\s+(?:(?:your|the|this)\s+(?:position|asset)|ETH|BTC|SOL|NVDA)\b/i,
   /^\s*(?:please\s+)?(?:exit|close|open|enter)\s+(?:(?:your|the|this)\s+)?position\b/i,
   // Advice directed at the reader remains prohibited even when it is phrased politely.
   /\b(?:you|the user|the trader|the investor)\s+(?:should|must|need(?:s)?\s+to|ought\s+to|(?:are|is)\s+advised\s+to)\s+(?:buy|sell|exit|close|open|enter)\b/i,
@@ -158,7 +158,28 @@ const SEMANTIC_EVIDENCE_RULES: ReadonlyArray<{
     pattern: /\bvolume\b/i,
     absencePattern:
       /(?:\b(?:no|missing|absent|unavailable)\b[^.]{0,50}\bvolume\b|\bvolume(?: data| evidence| observations?)?\b[^.]{0,30}\b(?:missing|absent|unavailable)\b)/i,
-    allowedTypes: new Set(['BASE_VOLUME_24H']),
+    allowedTypes: new Set(['BASE_VOLUME_24H', 'SESSION_VOLUME']),
+  },
+  {
+    label: 'market-capitalization',
+    pattern: /\b(?:market capitalization|market cap)\b/i,
+    absencePattern:
+      /(?:\b(?:no|missing|absent|unavailable)\b[^.]{0,50}\b(?:market capitalization|market cap)\b|\b(?:market capitalization|market cap)(?: data| evidence| observations?)?\b[^.]{0,30}\b(?:missing|absent|unavailable)\b)/i,
+    allowedTypes: new Set(['MARKET_CAPITALIZATION']),
+  },
+  {
+    label: 'valuation-multiple',
+    pattern:
+      /\b(?:valuation multiple|price-to-earnings|trailing P\/E|last year reported P\/E|price-to-book|EV\/EBITDA|enterprise multiple|price-to-sales)\b/i,
+    absencePattern:
+      /(?:\b(?:no|missing|absent|unavailable)\b[^.]{0,50}\b(?:valuation multiple|earnings multiple|P\/E|price-to-earnings)\b|\b(?:valuation multiple|earnings multiple|P\/E|price-to-earnings)(?: data| evidence| observations?)?\b[^.]{0,30}\b(?:missing|absent|unavailable)\b)/i,
+    allowedTypes: new Set([
+      'VALUATION_PE_TTM',
+      'VALUATION_PE_LYR',
+      'VALUATION_PB_RATIO',
+      'VALUATION_EV_EBITDA',
+      'VALUATION_PS_TTM',
+    ]),
   },
 ];
 
@@ -226,6 +247,54 @@ const EVIDENCE_CAPABILITIES: Record<
       'Does not independently establish funding, directional positioning, institutional participation, crowding, or a future outcome',
     ],
   },
+  SESSION_PRICE_CHANGE: {
+    supports: ['Source-reported session price change for one equity market relative to previous close'],
+    limitations: [
+      'Does not verify live trade execution or regular-session closing status, and does not establish fair value, forward continuation, or a future stock return',
+    ],
+  },
+  SESSION_VOLUME: {
+    supports: ['Source-reported session trading volume for one equity market'],
+    limitations: [
+      'Does not establish market liquidity depth, buyer accumulation, institutional participation, investor positioning, or a future outcome',
+    ],
+  },
+  MARKET_CAPITALIZATION: {
+    supports: ['Source-reported total market capitalization for one equity issuer'],
+    limitations: [
+      'Reflects aggregate equity valuation scale but does not establish market liquidity, trading depth, institutional participation, investor positioning, or future returns',
+    ],
+  },
+  VALUATION_PE_TTM: {
+    supports: ['Trailing twelve-month price-to-earnings multiple for one equity issuer based on source-reported period'],
+    limitations: [
+      'Does not independently prove SEC filing dates, financial-report provenance, fair value, forward earnings growth, data-center demand, or future stock returns',
+    ],
+  },
+  VALUATION_PE_LYR: {
+    supports: ['Last year reported price-to-earnings multiple for one equity issuer based on source-reported period'],
+    limitations: [
+      'Historical backward-looking accounting ratio; does not independently prove SEC filing dates, fair value, forward earnings growth, recent quarterly changes, or future stock returns',
+    ],
+  },
+  VALUATION_PB_RATIO: {
+    supports: ['Price-to-book multiple for one equity issuer based on source-reported period'],
+    limitations: [
+      'Does not independently prove SEC filing dates, fair value, intangible asset value, return on capital, or future stock returns',
+    ],
+  },
+  VALUATION_EV_EBITDA: {
+    supports: ['Enterprise value to EBITDA multiple for one equity issuer based on source-reported period'],
+    limitations: [
+      'Provides capital-structure-neutral operating valuation but does not independently prove SEC filing dates, fair value, future free cash flow, capital expenditure demands, or future stock returns',
+    ],
+  },
+  VALUATION_PS_TTM: {
+    supports: ['Trailing twelve-month price-to-sales multiple for one equity issuer based on source-reported period'],
+    limitations: [
+      'Reflects top-line valuation scale but does not independently prove SEC filing dates, fair value, operating margins, gross-margin expansion, bottom-line profitability, or forward growth',
+    ],
+  },
 };
 
 export type AuthorizedObservationSemantics = 'POINT_IN_TIME' | 'HISTORICAL_INTERVAL';
@@ -251,7 +320,7 @@ export interface AuthorizedFactualClaim {
   derivedFromEvidenceIds: string[];
   supportsMeasurements: string[];
   measurementLimitations: string[];
-  observedAt: string;
+  observedAt: string | null;
   retrievedAt: string;
   sourceName: string;
 }
@@ -392,7 +461,7 @@ export function evidenceObservationCoverage(
     for (const item of matchingItems) {
       const observationInstance = item.observation.periodStartAt
         ? `${item.observation.periodStartAt}/${item.observation.periodEndAt}`
-        : item.provenance.observedAt;
+        : item.provenance.observedAt ?? item.provenance.retrievedAt;
       const marketInstances =
         observationInstancesByMarket.get(item.observation.market) ?? new Set<string>();
       marketInstances.add(observationInstance);
@@ -474,8 +543,36 @@ export function authorizedResearchLimitationCatalog(
     );
   }
 
+  const unknownObservationTimeClaimIds = ledger.items
+    .filter((item) => item.provenance.freshnessMode === 'UNKNOWN_OBSERVATION_TIME')
+    .map((item) => item.id);
+  if (unknownObservationTimeClaimIds.length > 0) {
+    addLimitation(
+      'NOT_ACQUIRED',
+      'OBSERVATION_TIMESTAMP',
+      'Exchange quote observations lack an authentic execution timestamp and reflect only retrieval time, without verifying live trade execution or regular-session closing status.',
+      unknownObservationTimeClaimIds
+    );
+  }
+
+  if (categories.has('VALUATION_METRIC')) {
+    const valuationClaimIds = ledger.items
+      .filter((item) => item.category === 'VALUATION_METRIC')
+      .map((item) => item.id);
+    addLimitation(
+      'INFERENCE_NOT_ESTABLISHED',
+      'VALUATION_PROVENANCE',
+      'Source-provided valuation dates and metrics reflect external provider reporting periods and do not independently verify SEC filing dates, specific accounting statement provenance, or forward business catalysts.',
+      valuationClaimIds
+    );
+  }
+
   const historicalClaimIds = ledger.items
-    .filter((item) => item.observation.periodStartAt && item.observation.periodEndAt)
+    .filter(
+      (item) =>
+        (item.observation.periodStartAt && item.observation.periodEndAt) ||
+        item.provenance.freshnessMode === 'HISTORICAL_RECORD'
+    )
     .map((item) => item.id);
   if (historicalClaimIds.length > 0) {
     addLimitation(
@@ -518,6 +615,7 @@ export type ArgumentInterpretationKind =
   | 'OPEN_INTEREST_CONTEXT'
   | 'VOLUME_CONTEXT'
   | 'POINT_IN_TIME_PRICE_CONTEXT'
+  | 'VALUATION_METRIC_CONTEXT'
   | 'DIRECTIONAL_POSITIONING_NOT_ESTABLISHED'
   | 'FORWARD_PERSISTENCE_NOT_ESTABLISHED'
   | 'RESEARCH_LIMITATION';
@@ -547,6 +645,14 @@ const OBSERVATION_ASSUMPTION_PREFERENCES: Record<
   RELATIVE_RETURN: ['CORRELATION', 'MARKET_REGIME', 'OTHER'],
   FUNDING_RATE: ['POSITIONING', 'MICROSTRUCTURE', 'OTHER'],
   OPEN_INTEREST: ['POSITIONING', 'LIQUIDITY', 'OTHER'],
+  SESSION_PRICE_CHANGE: ['MARKET_REGIME', 'CORRELATION', 'OTHER'],
+  SESSION_VOLUME: ['LIQUIDITY', 'MICROSTRUCTURE', 'OTHER'],
+  MARKET_CAPITALIZATION: ['MARKET_REGIME', 'OTHER'],
+  VALUATION_PE_TTM: ['MARKET_REGIME', 'OTHER'],
+  VALUATION_PE_LYR: ['MARKET_REGIME', 'OTHER'],
+  VALUATION_PB_RATIO: ['MARKET_REGIME', 'OTHER'],
+  VALUATION_EV_EBITDA: ['MARKET_REGIME', 'OTHER'],
+  VALUATION_PS_TTM: ['MARKET_REGIME', 'OTHER'],
 };
 
 const LIMITATION_ASSUMPTION_PREFERENCES: Record<
@@ -560,6 +666,8 @@ const LIMITATION_ASSUMPTION_PREFERENCES: Record<
   DERIVATIVES_POSITIONING: ['POSITIONING', 'MICROSTRUCTURE', 'OTHER'],
   FORWARD_PERSISTENCE: ['CATALYST_TIMING', 'MARKET_REGIME', 'OTHER'],
   EVIDENCE_FRESHNESS: ['CATALYST_TIMING', 'MARKET_REGIME', 'OTHER'],
+  OBSERVATION_TIMESTAMP: ['MARKET_REGIME', 'OTHER'],
+  VALUATION_PROVENANCE: ['MARKET_REGIME', 'OTHER'],
 };
 
 function selectBoundAssumption(
@@ -618,6 +726,15 @@ function observationInterpretation(
             ? `The single-market historical price change provides context but does not establish ${comparison} relative performance or a future outcome.`
             : `The historical ${thesis.baseAsset} price change measures past behavior but does not establish future direction or persistence.`,
       };
+    case 'SESSION_PRICE_CHANGE':
+      return {
+        interpretationKind: relative
+          ? 'SINGLE_MARKET_PRICE_CONTEXT'
+          : 'SINGLE_ASSET_HISTORICAL_PRICE_OBSERVATION',
+        title: `Observed ${thesis.baseAsset} session price change`,
+        measurementText:
+          `The observed ${thesis.baseAsset} session price change reflects source-reported price change relative to previous close, but does not verify live trade execution, regular-session closing status, future price continuation, or fundamental valuation.`,
+      };
     case 'FUNDING_RATE':
       return {
         interpretationKind: 'FUNDING_RATE_CONTEXT',
@@ -639,6 +756,13 @@ function observationInterpretation(
         measurementText:
           'The historical volume observation provides market-activity context and does not establish relative performance or a future outcome.',
       };
+    case 'SESSION_VOLUME':
+      return {
+        interpretationKind: 'VOLUME_CONTEXT',
+        title: `Observed ${thesis.baseAsset} session trading volume`,
+        measurementText:
+          `The observed ${thesis.baseAsset} session volume reflects source-reported trading volume but does not establish buyer accumulation, liquidity depth, institutional participation, or investor positioning.`,
+      };
     case 'LAST_PRICE':
     case 'CANDLE_OPEN':
     case 'CANDLE_CLOSE':
@@ -647,6 +771,48 @@ function observationInterpretation(
         title: 'Observed market-price context',
         measurementText:
           'The observed market price provides bounded context and does not establish price change, relative performance, or a future outcome.',
+      };
+    case 'MARKET_CAPITALIZATION':
+      return {
+        interpretationKind: 'VALUATION_METRIC_CONTEXT',
+        title: `Observed ${thesis.baseAsset} market capitalization`,
+        measurementText:
+          `The observed ${thesis.baseAsset} total market capitalization reflects aggregate equity valuation scale but does not establish market liquidity, trading depth, institutional participation, investor positioning, or future returns.`,
+      };
+    case 'VALUATION_PE_TTM':
+      return {
+        interpretationKind: 'VALUATION_METRIC_CONTEXT',
+        title: `Observed ${thesis.baseAsset} trailing twelve-month P/E multiple`,
+        measurementText:
+          `The trailing twelve-month P/E multiple measures current equity price relative to past net income for the source-reported period, but does not independently verify SEC filing dates, fair value, forward earnings growth, data-center demand, or future stock returns.`,
+      };
+    case 'VALUATION_PE_LYR':
+      return {
+        interpretationKind: 'VALUATION_METRIC_CONTEXT',
+        title: `Observed ${thesis.baseAsset} last year reported P/E multiple`,
+        measurementText:
+          `The last year reported P/E ratio measures valuation against historical fiscal-year earnings for the source-reported period, but does not independently verify SEC filing dates, fair value, forward earnings growth, recent quarterly changes, or future stock returns.`,
+      };
+    case 'VALUATION_PB_RATIO':
+      return {
+        interpretationKind: 'VALUATION_METRIC_CONTEXT',
+        title: `Observed ${thesis.baseAsset} price-to-book multiple`,
+        measurementText:
+          `The observed price-to-book multiple measures equity price relative to balance-sheet net assets for the source-reported period, but does not independently verify SEC filing dates, fair value, intangible asset value, return on capital, or future stock returns.`,
+      };
+    case 'VALUATION_EV_EBITDA':
+      return {
+        interpretationKind: 'VALUATION_METRIC_CONTEXT',
+        title: `Observed ${thesis.baseAsset} enterprise value multiple`,
+        measurementText:
+          `The observed enterprise value to EBITDA multiple provides capital-structure-neutral operating valuation for the source-reported period, but does not independently verify SEC filing dates, fair value, future free cash flow, capital expenditure intensity, or future stock returns.`,
+      };
+    case 'VALUATION_PS_TTM':
+      return {
+        interpretationKind: 'VALUATION_METRIC_CONTEXT',
+        title: `Observed ${thesis.baseAsset} price-to-sales multiple`,
+        measurementText:
+          `The observed trailing twelve-month price-to-sales multiple reflects top-line valuation scale for the source-reported period, but does not independently verify SEC filing dates, fair value, operating margins, gross-margin expansion, bottom-line profitability, or forward growth.`,
       };
   }
 }
@@ -762,7 +928,8 @@ export function authorizedArgumentPointCatalog(input: {
         ? claim.observationType === 'RELATIVE_RETURN' ||
           claim.observationType === 'RETURN_SPREAD'
         : claim.observationType === 'PRICE_CHANGE_24H' ||
-          claim.observationType === 'INTERVAL_PRICE_CHANGE';
+          claim.observationType === 'INTERVAL_PRICE_CHANGE' ||
+          claim.observationType === 'SESSION_PRICE_CHANGE';
     const relation = optionRelation(input.stance, evidence.stance, supportsRelativeThesis);
     const targetAssumption = selectBoundAssumption(
       input.assumptions,
@@ -1173,6 +1340,8 @@ function interpretationKindLabel(kind: ArgumentInterpretationKind): string {
       return 'trading-volume context';
     case 'POINT_IN_TIME_PRICE_CONTEXT':
       return 'point-in-time price context';
+    case 'VALUATION_METRIC_CONTEXT':
+      return 'valuation-metric context';
     case 'DIRECTIONAL_POSITIONING_NOT_ESTABLISHED':
       return 'the directional-positioning evidence limitation';
     case 'FORWARD_PERSISTENCE_NOT_ESTABLISHED':

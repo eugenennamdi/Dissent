@@ -13,7 +13,9 @@ export type MarketResearchDimension =
   | 'SPOT_TICKER'
   | 'SPOT_CANDLES'
   | 'FUTURES_TICKER'
-  | 'RELATIVE_METRICS';
+  | 'RELATIVE_METRICS'
+  | 'EQUITY_QUOTE'
+  | 'EQUITY_VALUATION';
 
 export type MarketResearchGapReason =
   | 'TIMEOUT'

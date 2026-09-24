@@ -29,6 +29,8 @@ import {
 loadEnvConfig(process.cwd());
 
 const runLive = process.env.RUN_APP_API_LIVE === '1';
+const NVDA_USD_LIVE_THESIS =
+  'NVDA will sustain its upward price trajectory over the next 90 days as trading volume and total market capitalization continue to support elevated valuation multiples.';
 const ETH_BTC_LIVE_THESIS =
   'I think ETH will outperform BTC over the next 48 hours because risk appetite is improving and ETH momentum is strengthening.';
 const SOL_BTC_LIVE_THESIS =
@@ -40,11 +42,13 @@ const liveResearchMarket = process.env.LIVE_RESEARCH_MARKET ?? 'ETH/BTC';
 describe.skipIf(!runLive)('Live application API', () => {
   it('runs the real pipeline and leaves the human decision unset', async () => {
     const thesis =
-      liveResearchMarket === 'SOL/BTC'
-        ? SOL_BTC_LIVE_THESIS
-        : liveResearchMarket === 'SOL/USDT'
-          ? SOL_USDT_LIVE_THESIS
-          : ETH_BTC_LIVE_THESIS;
+      liveResearchMarket === 'NVDA/USD'
+        ? NVDA_USD_LIVE_THESIS
+        : liveResearchMarket === 'SOL/BTC'
+          ? SOL_BTC_LIVE_THESIS
+          : liveResearchMarket === 'SOL/USDT'
+            ? SOL_USDT_LIVE_THESIS
+            : ETH_BTC_LIVE_THESIS;
     const completedModelCalls: ModelCallMetadata[] = [];
     const attemptedModelCalls: AttemptedModelCall[] = [];
     const deepSeek = new DeepSeekResponsesClient();
@@ -154,13 +158,28 @@ describe.skipIf(!runLive)('Live application API', () => {
     expect(research.brief.assumptions.length).toBeGreaterThan(0);
     expect(research.brief.stressScenarios.length).toBeGreaterThanOrEqual(2);
     expect(research.brief.invalidationConditions.length).toBeGreaterThan(0);
-    expect(
-      research.brief.evidenceLedger.items.every(
-        (item) =>
-          item.provenance.sourceName === 'Bitget V3 Market API' ||
-          item.provenance.sourceName === 'Dissent Deterministic Analytics'
-      )
-    ).toBe(true);
+    if (liveResearchMarket === 'NVDA/USD') {
+      expect(
+        research.brief.evidenceLedger.items.every(
+          (item) =>
+            item.provenance.sourceName === 'bitget-mcp-server' ||
+            item.provenance.sourceName === 'Dissent Deterministic Analytics'
+        )
+      ).toBe(true);
+      expect(
+        research.brief.evidenceLedger.items.some(
+          (item) => item.provenance.sourceName === 'bitget-mcp-server'
+        )
+      ).toBe(true);
+    } else {
+      expect(
+        research.brief.evidenceLedger.items.every(
+          (item) =>
+            item.provenance.sourceName === 'Bitget V3 Market API' ||
+            item.provenance.sourceName === 'Dissent Deterministic Analytics'
+        )
+      ).toBe(true);
+    }
     expect(() => DissentBriefV1Schema.parse(research.brief)).not.toThrow();
     expect(() => assertGeneratedBriefInvariants(research.brief)).not.toThrow();
     expect(() =>
@@ -260,6 +279,36 @@ describe.skipIf(!runLive)('Live application API', () => {
           'INTERVAL_PRICE_CHANGE',
         ])
       );
+      expect(research.brief.stressScenarios).toHaveLength(2);
+    }
+
+    if (liveResearchMarket === 'NVDA/USD') {
+      expect(research.brief.structuredThesis).toMatchObject({
+        market: 'NVDA/USD',
+        baseAsset: 'NVDA',
+        quoteAsset: 'USD',
+        direction: 'LONG',
+      });
+      const evidence = research.brief.evidenceLedger.items;
+      expect(new Set(evidence.map((item) => item.observation.market))).toEqual(
+        new Set(['NVDA/USD'])
+      );
+      expect(evidence.length).toBeGreaterThanOrEqual(6);
+      const quoteItems = evidence.filter(
+        (i) => i.provenance.freshnessMode === 'UNKNOWN_OBSERVATION_TIME'
+      );
+      expect(quoteItems.length).toBeGreaterThanOrEqual(2);
+      expect(quoteItems.every((i) => i.provenance.observedAt === null)).toBe(true);
+      expect(
+        evidence.every(
+          (i) =>
+            i.provenance.sourceName === 'bitget-mcp-server' ||
+            i.provenance.sourceName === 'Dissent Deterministic Analytics'
+        )
+      ).toBe(true);
+      expect(evidence.some((i) => i.provenance.sourceName === 'bitget-mcp-server')).toBe(true);
+      expect(research.advocateCase.points).toHaveLength(5);
+      expect(research.brief.theDissent.points).toHaveLength(5);
       expect(research.brief.stressScenarios).toHaveLength(2);
     }
 

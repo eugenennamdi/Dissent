@@ -7,7 +7,8 @@ import {
 /**
  * Formats an ISO datetime string into UTC human-readable notation.
  */
-export function formatUtcDateTime(isoString: string): string {
+export function formatUtcDateTime(isoString: string | null | undefined): string {
+  if (!isoString) return 'Unknown';
   try {
     const date = new Date(isoString);
     if (isNaN(date.getTime())) return isoString;
@@ -30,7 +31,8 @@ export function formatUtcDateTime(isoString: string): string {
 /**
  * Formats an ISO datetime string into a compact local time representation.
  */
-export function formatLocalDateTime(isoString: string): string {
+export function formatLocalDateTime(isoString: string | null | undefined): string {
+  if (!isoString) return 'Unknown';
   try {
     const date = new Date(isoString);
     if (isNaN(date.getTime())) return isoString;
@@ -72,7 +74,7 @@ export function formatDurationMs(ms: number): string {
 export function getEvidenceFreshness(
   evidence: EvidenceV1,
   asOf: Date | string = new Date()
-): { level: FreshnessLevelV1; ageSeconds: number; isStale: boolean } {
+): { level: FreshnessLevelV1; ageSeconds: number | null; isStale: boolean } {
   return deriveEvidenceFreshness(evidence, asOf);
 }
 

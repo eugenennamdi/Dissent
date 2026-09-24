@@ -10,6 +10,7 @@ export const EvidenceCategoryV1Schema = z.enum([
   'ON_CHAIN_ACTIVITY',
   'MACRO_METRIC',
   'SENTIMENT_METRIC',
+  'VALUATION_METRIC',
   'CORRELATION',
   'OTHER',
 ]);
@@ -44,6 +45,7 @@ export const FreshnessLevelV1Schema = z.enum([
   'DELAYED',
   'HISTORICAL',
   'STALE',
+  'UNKNOWN',
 ]);
 export type FreshnessLevelV1 = z.infer<typeof FreshnessLevelV1Schema>;
 
@@ -58,6 +60,14 @@ export const EvidenceObservationTypeV1Schema = z.enum([
   'RELATIVE_RETURN',
   'FUNDING_RATE',
   'OPEN_INTEREST',
+  'SESSION_PRICE_CHANGE',
+  'SESSION_VOLUME',
+  'MARKET_CAPITALIZATION',
+  'VALUATION_PE_TTM',
+  'VALUATION_PE_LYR',
+  'VALUATION_PB_RATIO',
+  'VALUATION_EV_EBITDA',
+  'VALUATION_PS_TTM',
 ]);
 export type EvidenceObservationTypeV1 = z.infer<
   typeof EvidenceObservationTypeV1Schema
@@ -67,6 +77,7 @@ export const MarketInstrumentTypeV1Schema = z.enum([
   'SPOT',
   'PERPETUAL_FUTURES',
   'DERIVED_SPOT_PAIR',
+  'EQUITY_CASH',
 ]);
 export type MarketInstrumentTypeV1 = z.infer<typeof MarketInstrumentTypeV1Schema>;
 
@@ -85,6 +96,7 @@ export const EvidenceObservationV1Schema = z
     interval: z.string().min(1).optional(),
     periodStartAt: z.string().datetime().optional(),
     periodEndAt: z.string().datetime().optional(),
+    reportingPeriod: z.string().min(1).optional(),
   })
   .refine(
     (observation) =>
@@ -104,6 +116,7 @@ export type EvidenceObservationV1 = z.infer<typeof EvidenceObservationV1Schema>;
 export const EvidenceFreshnessModeV1Schema = z.enum([
   'AGE_SINCE_OBSERVATION',
   'HISTORICAL_RECORD',
+  'UNKNOWN_OBSERVATION_TIME',
 ]);
 export type EvidenceFreshnessModeV1 = z.infer<typeof EvidenceFreshnessModeV1Schema>;
 
@@ -113,18 +126,29 @@ export type EvidenceFreshnessModeV1 = z.infer<typeof EvidenceFreshnessModeV1Sche
  * Contains the timestamps and window parameters required to deterministically
  * evaluate freshness at any future point without mutating the evidence.
  */
-export const EvidenceProvenanceV1Schema = z.object({
-  sourceName: z.string().min(1, 'Source name is required'),
-  sourceType: SourceTypeV1Schema,
-  endpointOrLocator: z.string().min(1, 'Endpoint or locator is required'),
-  observedAt: z.string().datetime({ message: 'observedAt must be ISO 8601 datetime' }),
-  retrievedAt: z.string().datetime({ message: 'retrievedAt must be ISO 8601 datetime' }),
-  validUntil: z.string().datetime().optional(),
-  freshnessWindowSeconds: z.number().int().positive().optional(),
-  freshnessMode: EvidenceFreshnessModeV1Schema.default('AGE_SINCE_OBSERVATION'),
-  contentHash: z.string().optional(),
-  rawSnapshot: z.record(z.unknown()).optional(),
-});
+export const EvidenceProvenanceV1Schema = z
+  .object({
+    sourceName: z.string().min(1, 'Source name is required'),
+    sourceType: SourceTypeV1Schema,
+    endpointOrLocator: z.string().min(1, 'Endpoint or locator is required'),
+    observedAt: z
+      .string()
+      .datetime({ message: 'observedAt must be ISO 8601 datetime' })
+      .nullable(),
+    retrievedAt: z.string().datetime({ message: 'retrievedAt must be ISO 8601 datetime' }),
+    validUntil: z.string().datetime().optional(),
+    freshnessWindowSeconds: z.number().int().positive().optional(),
+    freshnessMode: EvidenceFreshnessModeV1Schema.default('AGE_SINCE_OBSERVATION'),
+    contentHash: z.string().optional(),
+    rawSnapshot: z.record(z.unknown()).optional(),
+  })
+  .refine(
+    (provenance) =>
+      provenance.freshnessMode === 'UNKNOWN_OBSERVATION_TIME'
+        ? provenance.observedAt === null
+        : provenance.observedAt !== null,
+    'observedAt must be null if and only if freshnessMode is UNKNOWN_OBSERVATION_TIME'
+  );
 export type EvidenceProvenanceV1 = z.infer<typeof EvidenceProvenanceV1Schema>;
 
 /**
@@ -178,7 +202,7 @@ export type EvidenceLedgerV1 = z.infer<typeof EvidenceLedgerV1Schema>;
 
 export interface FreshnessEvaluationV1 {
   level: FreshnessLevelV1;
-  ageSeconds: number;
+  ageSeconds: number | null;
   isStale: boolean;
 }
 
@@ -194,16 +218,33 @@ export function deriveEvidenceFreshness(
   asOf: Date | string = new Date()
 ): FreshnessEvaluationV1 {
   const referenceMs = typeof asOf === 'string' ? new Date(asOf).getTime() : asOf.getTime();
-  const observedMs = new Date(evidence.provenance.observedAt).getTime();
-  const ageSeconds = Math.max(0, Math.floor((referenceMs - observedMs) / 1000));
 
   // If explicit validUntil is defined, check hard expiration
   if (evidence.provenance.validUntil) {
     const validUntilMs = new Date(evidence.provenance.validUntil).getTime();
     if (referenceMs > validUntilMs) {
+      const observedMs = evidence.provenance.observedAt
+        ? new Date(evidence.provenance.observedAt).getTime()
+        : null;
+      const ageSeconds =
+        observedMs !== null
+          ? Math.max(0, Math.floor((referenceMs - observedMs) / 1000))
+          : null;
       return { level: 'STALE', ageSeconds, isStale: true };
     }
   }
+
+  // Unknown observation time mode: does not fabricate a realtime or session-close freshness.
+  // It is never classified as verified LIVE or as a confirmed regular-session close.
+  if (
+    evidence.provenance.freshnessMode === 'UNKNOWN_OBSERVATION_TIME' ||
+    evidence.provenance.observedAt === null
+  ) {
+    return { level: 'UNKNOWN', ageSeconds: null, isStale: false };
+  }
+
+  const observedMs = new Date(evidence.provenance.observedAt).getTime();
+  const ageSeconds = Math.max(0, Math.floor((referenceMs - observedMs) / 1000));
 
   // Closed historical records do not become false merely because their
   // observation interval is old. Their age remains visible and categorical.
@@ -253,3 +294,18 @@ export function isEvidenceStale(
 ): boolean {
   return deriveEvidenceFreshness(evidence, asOf).isStale;
 }
+
+export const MINIMUM_USABLE_EQUITY_OBSERVATION_TYPES: readonly EvidenceObservationTypeV1[] = [
+  'LAST_PRICE',
+  'SESSION_PRICE_CHANGE',
+] as const;
+
+export const OPTIONAL_EQUITY_VALUATION_OBSERVATION_TYPES: readonly EvidenceObservationTypeV1[] = [
+  'SESSION_VOLUME',
+  'MARKET_CAPITALIZATION',
+  'VALUATION_PE_TTM',
+  'VALUATION_PE_LYR',
+  'VALUATION_PB_RATIO',
+  'VALUATION_EV_EBITDA',
+  'VALUATION_PS_TTM',
+] as const;

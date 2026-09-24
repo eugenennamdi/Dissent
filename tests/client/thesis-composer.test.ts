@@ -20,17 +20,15 @@ describe('ThesisComposer Component', () => {
 
     // Masthead & Value Prop
     expect(html).toContain('Stress-test the trade before the market does.');
-    expect(html).toContain('across BTC, ETH, and SOL markets');
+    expect(html).toContain('native US equities (NVDA/USD)');
 
     // Composer Input & Presets
     expect(html).toContain('thesis-input');
-    expect(html).toContain('SOL will outperform ETH over the next 48 hours');
-    expect(html).toContain('BTC will pull back against USDT over the next 24 hours');
+    expect(html).toContain('NVDA will sustain its upward valuation trajectory over the next 90 days');
     expect(html).toContain('Try thesis:');
-    expect(html).toContain('SOL/ETH Momentum');
-    expect(html).toContain('ETH/BTC Reversal');
-    expect(html).toContain('SOL/USDT Breakout');
-    expect(html).toContain('BTC/USDT Pullback');
+    expect(html).toContain('NVDA Valuation Support');
+    expect(html).toContain('NVDA Multiple Compression');
+    expect(html).toContain('NVDA Session Momentum');
 
     // Action Dock
     expect(html).toContain('5-stage adversarial synthesis (~40s)');
@@ -39,7 +37,7 @@ describe('ThesisComposer Component', () => {
     // Footer & Architecture Modal Trigger
     expect(html).toContain('View Architecture');
     expect(html).toContain('Powered by');
-    expect(html).toContain('Bitget V3 API');
+    expect(html).toContain('Bitget MCP');
     expect(html).not.toContain('01 / Grounding');
     expect(html).not.toContain('Bitget Public V2 Endpoints');
   });
