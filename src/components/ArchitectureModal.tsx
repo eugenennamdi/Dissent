@@ -34,7 +34,7 @@ export const PILLARS: ArchitecturePillar[] = [
     points: [
       {
         label: 'Bitget MCP & Market Services',
-        detail: 'Native US equity quotes (NVDA/USD), session volume, market capitalization, and fundamental valuation ratios.',
+        detail: 'Native US equity quotes (NVDA, COIN, MSFT, MSTR, TSLA, AAPL, AMD, META), session volume, market capitalization, and fundamental valuation ratios.',
       },
       {
         label: 'Deterministic Record Hashes',

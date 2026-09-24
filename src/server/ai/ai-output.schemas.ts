@@ -727,6 +727,8 @@ export function createStressResearchJsonSchema(input: {
   };
 }
 
+export const SYNTHESIS_CLASSIFICATION_EXPLANATION_MAX_LENGTH = 300;
+
 export const SynthesisDraftOutputSchema = z
   .object({
     dissentPointClassifications: z
@@ -743,7 +745,7 @@ export const SynthesisDraftOutputSchema = z
             targetType: z.enum(['THESIS_CLAIM', 'ASSUMPTION']),
             targetId: z.string().min(1),
             evidenceId: z.string().min(1),
-            explanation: z.string().min(1).max(400),
+            explanation: z.string().min(1).max(SYNTHESIS_CLASSIFICATION_EXPLANATION_MAX_LENGTH),
             severity: z.enum(['CRITICAL', 'SIGNIFICANT', 'MINOR']).nullable(),
           })
           .strict()
@@ -796,7 +798,7 @@ export function createSynthesisDraftJsonSchema(input: {
             explanation: {
               type: 'string',
               minLength: 1,
-              maxLength: 400,
+              maxLength: SYNTHESIS_CLASSIFICATION_EXPLANATION_MAX_LENGTH,
               pattern: NonNumericTextPattern,
             },
             severity: input.allowDirectContradictions

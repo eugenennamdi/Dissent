@@ -9,10 +9,13 @@ import { DissentError } from '@/core/errors/domain-errors';
 import {
   STRESS_EXPECTED_WINDOW_SELECTION,
   STRESS_TRANSMISSION_MECHANISM_MAX_LENGTH,
+  SYNTHESIS_CLASSIFICATION_EXPLANATION_MAX_LENGTH,
   THESIS_EXTRACTION_JSON_SCHEMA,
   StressResearchDraftOutputSchema,
+  SynthesisDraftOutputSchema,
   ThesisExtractionOutputSchema,
   createStressResearchJsonSchema,
+  createSynthesisDraftJsonSchema,
 } from '@/server/ai/ai-output.schemas';
 import { DeepSeekAnalystAdapter } from '@/server/ai/deepseek-analyst.adapter';
 import { DeepSeekResponsesClient } from '@/server/ai/deepseek-responses.client';
@@ -2153,6 +2156,150 @@ describe('DeepSeekAnalystAdapter', () => {
         details: expect.objectContaining({ observationType: 'FUNDING_RATE' }),
       })
     );
+  });
+
+  it('enforces synthesis classification explanation length contract at application and provider boundaries', async () => {
+    const thesis = makeStructuredThesis();
+    const dissentCase = makeArgument('DISSENTER');
+    const validExplanation = 'Historical relative performance does not establish forward persistence';
+    const maxLenExplanation = 'A'.repeat(SYNTHESIS_CLASSIFICATION_EXPLANATION_MAX_LENGTH);
+    const oversizedExplanation = 'A'.repeat(SYNTHESIS_CLASSIFICATION_EXPLANATION_MAX_LENGTH + 1);
+
+    // 1. A valid concise classification explanation passes schema validation
+    const validDraft = {
+      ...synthesisDraft({
+        dissentPointId: dissentCase.points[0]?.id,
+        evidenceId: dissentCase.points[0]?.evidenceIds[0],
+        targetId: thesis.id,
+      }),
+      dissentPointClassifications: [
+        {
+          dissentPointId: dissentCase.points[0]?.id,
+          classification: 'EVIDENCE_LIMITATION' as const,
+          targetType: 'THESIS_CLAIM' as const,
+          targetId: thesis.id,
+          evidenceId: dissentCase.points[0]?.evidenceIds[0],
+          explanation: validExplanation,
+          severity: null,
+        },
+      ],
+    };
+    expect(SynthesisDraftOutputSchema.safeParse(validDraft).success).toBe(true);
+
+    // 2. Exactly at max boundary (300 chars) passes
+    const maxBoundaryDraft = {
+      ...validDraft,
+      dissentPointClassifications: [
+        {
+          ...validDraft.dissentPointClassifications[0],
+          explanation: maxLenExplanation,
+        },
+      ],
+    };
+    expect(SynthesisDraftOutputSchema.safeParse(maxBoundaryDraft).success).toBe(true);
+
+    // 3. An explanation exceeding 300 characters fails schema validation with too_big
+    const oversizedDraft = {
+      ...validDraft,
+      dissentPointClassifications: [
+        {
+          ...validDraft.dissentPointClassifications[0],
+          explanation: oversizedExplanation,
+        },
+      ],
+    };
+    const oversizedResult = SynthesisDraftOutputSchema.safeParse(oversizedDraft);
+    expect(oversizedResult.success).toBe(false);
+    if (!oversizedResult.success) {
+      expect(oversizedResult.error.issues[0]).toMatchObject({
+        code: 'too_big',
+        maximum: SYNTHESIS_CLASSIFICATION_EXPLANATION_MAX_LENGTH,
+        path: ['dissentPointClassifications', 0, 'explanation'],
+      });
+    }
+
+    // 4. Provider jsonSchema aligns with application contract (maxLength: 300)
+    const dissentPointId = dissentCase.points[0]?.id ?? 'argp_dissent';
+    const evidenceId = dissentCase.points[0]?.evidenceIds[0] ?? 'ev_return';
+    const providerJsonSchema = createSynthesisDraftJsonSchema({
+      dissentPointIds: [dissentPointId],
+      evidenceIds: [evidenceId],
+      targetIds: [thesis.id],
+      allowDirectContradictions: false,
+    }) as {
+      properties: {
+        dissentPointClassifications: {
+          items: {
+            properties: {
+              explanation: { maxLength: number };
+            };
+          };
+        };
+      };
+    };
+    expect(
+      providerJsonSchema.properties.dissentPointClassifications.items.properties.explanation.maxLength
+    ).toBe(SYNTHESIS_CLASSIFICATION_EXPLANATION_MAX_LENGTH);
+    expect(SYNTHESIS_CLASSIFICATION_EXPLANATION_MAX_LENGTH).toBe(300);
+
+    // 5. System prompt explicitly instructs concise classification explanations targeting substantially fewer than 300 chars
+    const model = new QueueModel([...stressOutputs(), validDraft]);
+    const analyst = new DeepSeekAnalystAdapter({
+      model,
+      now: () => new Date(FIXED_AT),
+    });
+    const stressed = await analyst.stressTest(
+      thesis,
+      makeAssumptions(),
+      makeEvidenceLedger(),
+      makeArgument('ADVOCATE'),
+      dissentCase
+    );
+    const brief = await analyst.synthesizeBrief({
+      runId: 'run_ai_1',
+      originalThesis: thesisInput,
+      structuredThesis: thesis,
+      advocateCase: makeArgument('ADVOCATE'),
+      dissentCase,
+      assumptions: stressed.testedAssumptions,
+      stressScenarios: stressed.stressScenarios,
+      invalidationConditions: stressed.invalidationConditions,
+      evidenceLedger: makeEvidenceLedger(),
+    });
+    expect(brief.humanDecision).toBeNull();
+    const synthesisReq = model.requests.find((r) => r.operation === 'synthesizeBrief');
+    expect(synthesisReq?.systemPrompt).toContain(
+      `Provide concise classification explanations, targeting substantially fewer than ${SYNTHESIS_CLASSIFICATION_EXPLANATION_MAX_LENGTH} characters and never exceeding ${SYNTHESIS_CLASSIFICATION_EXPLANATION_MAX_LENGTH} characters.`
+    );
+
+    // 6. DeepSeekAnalystAdapter rejects oversized explanation during synthesizeBrief with APPLICATION_SCHEMA_VALIDATION
+    await expect(
+      new DeepSeekAnalystAdapter({
+        model: new QueueModel([oversizedDraft]),
+        now: () => new Date(FIXED_AT),
+      }).synthesizeBrief({
+        runId: 'run_ai_1',
+        originalThesis: thesisInput,
+        structuredThesis: thesis,
+        advocateCase: makeArgument('ADVOCATE'),
+        dissentCase,
+        assumptions: stressed.testedAssumptions,
+        stressScenarios: stressed.stressScenarios,
+        invalidationConditions: stressed.invalidationConditions,
+        evidenceLedger: makeEvidenceLedger(),
+      })
+    ).rejects.toMatchObject({
+      code: 'MODEL_OUTPUT_INVALID',
+      details: expect.objectContaining({
+        validationCategory: 'APPLICATION_SCHEMA_VALIDATION',
+        issues: expect.arrayContaining([
+          expect.objectContaining({
+            code: 'too_big',
+            path: 'dissentPointClassifications.0.explanation',
+          }),
+        ]),
+      }),
+    });
   });
 
 });

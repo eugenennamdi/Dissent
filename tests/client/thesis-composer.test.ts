@@ -20,15 +20,17 @@ describe('ThesisComposer Component', () => {
 
     // Masthead & Value Prop
     expect(html).toContain('Stress-test the trade before the market does.');
-    expect(html).toContain('native US equities (NVDA/USD)');
+    expect(html).toContain('native US equities (NVDA, COIN, MSFT, MSTR, TSLA, AAPL, AMD, META)');
 
     // Composer Input & Presets
     expect(html).toContain('thesis-input');
     expect(html).toContain('NVDA will sustain its upward valuation trajectory over the next 90 days');
     expect(html).toContain('Try thesis:');
     expect(html).toContain('NVDA Valuation Support');
-    expect(html).toContain('NVDA Multiple Compression');
-    expect(html).toContain('NVDA Session Momentum');
+    expect(html).toContain('COIN Volume Hypothesis');
+    expect(html).toContain('MSFT Enterprise Stability');
+    expect(html).toContain('TSLA Multiple Compression');
+    expect(html).toContain('MSTR Multiple Scrutiny');
 
     // Action Dock
     expect(html).toContain('5-stage adversarial synthesis (~40s)');
@@ -40,6 +42,7 @@ describe('ThesisComposer Component', () => {
     expect(html).toContain('Bitget MCP');
     expect(html).not.toContain('01 / Grounding');
     expect(html).not.toContain('Bitget Public V2 Endpoints');
+    expect(html).not.toContain('operating and earnings deficits');
   });
 
   it('renders error alert when errorMessage is passed', () => {

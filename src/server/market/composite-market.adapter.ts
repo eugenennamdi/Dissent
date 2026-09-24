@@ -17,7 +17,7 @@ export interface CompositeMarketAdapterOptions {
  * CompositeMarketAdapter
  *
  * Routes thesis market observations to the appropriate market desk:
- * - Native US-Equity single-asset research (NVDA/USD) -> BitgetEquityAdapter (MCP)
+ * - Native US-Equity single-asset research (NVDA, COIN, MSFT, MSTR, TSLA, AAPL, AMD, META) -> BitgetEquityAdapter (MCP)
  * - Crypto relative and single-asset research (BTC, ETH, SOL) -> BitgetMarketAdapter (Spot/Futures API)
  */
 export class CompositeMarketAdapter implements MarketDeskPort {

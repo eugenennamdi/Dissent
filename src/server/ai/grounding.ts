@@ -62,7 +62,7 @@ const NUMERIC_FACT_PATTERN = /(?:[$€£¥]|\b\d+(?:[.,]\d+)?\b|%)/;
 const PROHIBITED_TRADING_LANGUAGE_PATTERNS: readonly RegExp[] = [
   // Direct imperatives aimed at taking or closing a supported-asset position. Requiring
   // a trading object keeps descriptive nouns such as "sell-off" and "buy-side" valid.
-  /^\s*(?:please\s+)?(?:buy|sell)\s+(?:(?:your|the|this)\s+(?:position|asset)|ETH|BTC|SOL|NVDA)\b/i,
+  /^\s*(?:please\s+)?(?:buy|sell)\s+(?:(?:your|the|this)\s+(?:position|asset)|ETH|BTC|SOL|NVDA|COIN|MSFT|MSTR|TSLA|AAPL|AMD|META)\b/i,
   /^\s*(?:please\s+)?(?:exit|close|open|enter)\s+(?:(?:your|the|this)\s+)?position\b/i,
   // Advice directed at the reader remains prohibited even when it is phrased politely.
   /\b(?:you|the user|the trader|the investor)\s+(?:should|must|need(?:s)?\s+to|ought\s+to|(?:are|is)\s+advised\s+to)\s+(?:buy|sell|exit|close|open|enter)\b/i,
@@ -268,7 +268,7 @@ const EVIDENCE_CAPABILITIES: Record<
   VALUATION_PE_TTM: {
     supports: ['Trailing twelve-month price-to-earnings multiple for one equity issuer based on source-reported period'],
     limitations: [
-      'Does not independently prove SEC filing dates, financial-report provenance, fair value, forward earnings growth, data-center demand, or future stock returns',
+      'Does not independently prove SEC filing dates, financial-report provenance, fair value, forward earnings growth, product demand, market growth, or future stock returns',
     ],
   },
   VALUATION_PE_LYR: {
@@ -618,6 +618,9 @@ export type ArgumentInterpretationKind =
   | 'VALUATION_METRIC_CONTEXT'
   | 'DIRECTIONAL_POSITIONING_NOT_ESTABLISHED'
   | 'FORWARD_PERSISTENCE_NOT_ESTABLISHED'
+  | 'OBSERVATION_TIMESTAMP_UNVERIFIED'
+  | 'VALUATION_PROVENANCE_UNVERIFIED'
+  | 'EVIDENCE_STALENESS_LIMITATION'
   | 'RESEARCH_LIMITATION';
 
 export interface AuthorizedArgumentPointOption {
@@ -691,7 +694,8 @@ function selectBoundAssumption(
 
 function observationInterpretation(
   observationType: EvidenceObservationTypeV1,
-  thesis: StructuredThesisV1
+  thesis: StructuredThesisV1,
+  market?: string
 ): Pick<AuthorizedArgumentPointOption, 'interpretationKind' | 'title'> & {
   measurementText: string;
 } {
@@ -713,18 +717,30 @@ function observationInterpretation(
           `The aligned historical return spread measures the difference between ${thesis.baseAsset} and ${thesis.quoteAsset} returns in percentage points, not the percentage change of the ${comparison} ratio.`,
       };
     case 'PRICE_CHANGE_24H':
+      return {
+        interpretationKind: relative
+          ? 'SINGLE_MARKET_PRICE_CONTEXT'
+          : 'SINGLE_ASSET_HISTORICAL_PRICE_OBSERVATION',
+        title: relative
+          ? (market ? `Observed ${market} historical price context` : 'Single-market historical price context')
+          : `Observed ${thesis.baseAsset} historical price behavior`,
+        measurementText:
+          relative
+            ? `The single-market historical price change provides context but does not establish ${comparison} relative performance or a future outcome.`
+            : `The historical ${thesis.baseAsset} price change measures past behavior but does not establish future direction or persistence.`,
+      };
     case 'INTERVAL_PRICE_CHANGE':
       return {
         interpretationKind: relative
           ? 'SINGLE_MARKET_PRICE_CONTEXT'
           : 'SINGLE_ASSET_HISTORICAL_PRICE_OBSERVATION',
         title: relative
-          ? 'Single-market historical price context'
-          : `Observed ${thesis.baseAsset} historical price behavior`,
+          ? (market ? `Observed ${market} interval price context` : 'Aligned interval price context')
+          : `Observed ${thesis.baseAsset} interval price change`,
         measurementText:
           relative
-            ? `The single-market historical price change provides context but does not establish ${comparison} relative performance or a future outcome.`
-            : `The historical ${thesis.baseAsset} price change measures past behavior but does not establish future direction or persistence.`,
+            ? `The historical interval price change provides context but does not establish ${comparison} relative performance or a future outcome.`
+            : `The historical ${thesis.baseAsset} interval price change measures past behavior but does not establish future direction or persistence.`,
       };
     case 'SESSION_PRICE_CHANGE':
       return {
@@ -738,21 +754,30 @@ function observationInterpretation(
     case 'FUNDING_RATE':
       return {
         interpretationKind: 'FUNDING_RATE_CONTEXT',
-        title: 'Observed funding-rate context',
+        title:
+          relative && market
+            ? `Observed ${market} funding-rate context`
+            : 'Observed funding-rate context',
         measurementText:
           'The funding-rate observation provides derivatives context but does not establish directional positioning, institutional participation, crowding, relative performance, or a future outcome.',
       };
     case 'OPEN_INTEREST':
       return {
         interpretationKind: 'OPEN_INTEREST_CONTEXT',
-        title: 'Observed open-interest context',
+        title:
+          relative && market
+            ? `Observed ${market} open-interest context`
+            : 'Observed open-interest context',
         measurementText:
           'The open-interest observation provides derivatives context but does not establish directional positioning, institutional participation, crowding, relative performance, or a future outcome.',
       };
     case 'BASE_VOLUME_24H':
       return {
         interpretationKind: 'VOLUME_CONTEXT',
-        title: 'Observed trading-volume context',
+        title:
+          relative && market
+            ? `Observed ${market} trading-volume context`
+            : 'Observed trading-volume context',
         measurementText:
           'The historical volume observation provides market-activity context and does not establish relative performance or a future outcome.',
       };
@@ -764,13 +789,34 @@ function observationInterpretation(
           `The observed ${thesis.baseAsset} session volume reflects source-reported trading volume but does not establish buyer accumulation, liquidity depth, institutional participation, or investor positioning.`,
       };
     case 'LAST_PRICE':
+      return {
+        interpretationKind: 'POINT_IN_TIME_PRICE_CONTEXT',
+        title:
+          relative && market
+            ? `Observed ${market} market-price context`
+            : 'Observed market-price context',
+        measurementText:
+          'The observed market price provides bounded context and does not establish price change, relative performance, or a future outcome.',
+      };
     case 'CANDLE_OPEN':
+      return {
+        interpretationKind: 'POINT_IN_TIME_PRICE_CONTEXT',
+        title:
+          relative && market
+            ? `Observed ${market} interval open price context`
+            : 'Observed interval open price context',
+        measurementText:
+          'The observed interval open price provides point-in-time candle context and does not establish price change, relative performance, or a future outcome.',
+      };
     case 'CANDLE_CLOSE':
       return {
         interpretationKind: 'POINT_IN_TIME_PRICE_CONTEXT',
-        title: 'Observed market-price context',
+        title:
+          relative && market
+            ? `Observed ${market} interval close price context`
+            : 'Observed interval close price context',
         measurementText:
-          'The observed market price provides bounded context and does not establish price change, relative performance, or a future outcome.',
+          'The observed interval close price provides point-in-time candle context and does not establish price change, relative performance, or a future outcome.',
       };
     case 'MARKET_CAPITALIZATION':
       return {
@@ -784,7 +830,7 @@ function observationInterpretation(
         interpretationKind: 'VALUATION_METRIC_CONTEXT',
         title: `Observed ${thesis.baseAsset} trailing twelve-month P/E multiple`,
         measurementText:
-          `The trailing twelve-month P/E multiple measures current equity price relative to past net income for the source-reported period, but does not independently verify SEC filing dates, fair value, forward earnings growth, data-center demand, or future stock returns.`,
+          `The trailing twelve-month P/E multiple measures current equity price relative to past net income for the source-reported period, but does not independently verify SEC filing dates, fair value, forward earnings growth, product demand, market growth, or future stock returns.`,
       };
     case 'VALUATION_PE_LYR':
       return {
@@ -922,7 +968,11 @@ export function authorizedArgumentPointCatalog(input: {
         `Authorized claim ${claim.claimId} has no matching ledger evidence.`
       );
     }
-    const semantics = observationInterpretation(claim.observationType, input.thesis);
+    const semantics = observationInterpretation(
+      claim.observationType,
+      input.thesis,
+      claim.market
+    );
     const supportsRelativeThesis =
       relativeThesis
         ? claim.observationType === 'RELATIVE_RETURN' ||
@@ -961,18 +1011,30 @@ export function authorizedArgumentPointCatalog(input: {
         input.assumptions,
         LIMITATION_ASSUMPTION_PREFERENCES[limitation.dimension] ?? ['OTHER']
       );
-      const interpretationKind: ArgumentInterpretationKind =
-        limitation.dimension === 'DIRECTIONAL_POSITIONING'
-          ? 'DIRECTIONAL_POSITIONING_NOT_ESTABLISHED'
-          : limitation.dimension === 'FORWARD_PERSISTENCE'
-            ? 'FORWARD_PERSISTENCE_NOT_ESTABLISHED'
-            : 'RESEARCH_LIMITATION';
-      const title =
-        limitation.dimension === 'DIRECTIONAL_POSITIONING'
-          ? 'Directional positioning remains unestablished'
-          : limitation.dimension === 'FORWARD_PERSISTENCE'
-            ? 'Forward persistence remains unestablished'
-            : 'Authorized research limitation';
+      let interpretationKind: ArgumentInterpretationKind = 'RESEARCH_LIMITATION';
+      let title = 'Authorized research limitation';
+      switch (limitation.dimension) {
+        case 'DIRECTIONAL_POSITIONING':
+          interpretationKind = 'DIRECTIONAL_POSITIONING_NOT_ESTABLISHED';
+          title = 'Directional positioning remains unestablished';
+          break;
+        case 'FORWARD_PERSISTENCE':
+          interpretationKind = 'FORWARD_PERSISTENCE_NOT_ESTABLISHED';
+          title = 'Forward persistence remains unestablished';
+          break;
+        case 'OBSERVATION_TIMESTAMP':
+          interpretationKind = 'OBSERVATION_TIMESTAMP_UNVERIFIED';
+          title = 'Quote observation time is unverified';
+          break;
+        case 'VALUATION_PROVENANCE':
+          interpretationKind = 'VALUATION_PROVENANCE_UNVERIFIED';
+          title = 'Valuation metrics reflect provider reporting periods only';
+          break;
+        case 'EVIDENCE_FRESHNESS':
+          interpretationKind = 'EVIDENCE_STALENESS_LIMITATION';
+          title = 'Stale observations cannot establish current conditions';
+          break;
+      }
       options.push(
         createAuthorizedOption({
           thesisId: input.thesis.id,
@@ -1346,6 +1408,12 @@ function interpretationKindLabel(kind: ArgumentInterpretationKind): string {
       return 'the directional-positioning evidence limitation';
     case 'FORWARD_PERSISTENCE_NOT_ESTABLISHED':
       return 'the forward-persistence evidence limitation';
+    case 'OBSERVATION_TIMESTAMP_UNVERIFIED':
+      return 'the observation-timestamp evidence limitation';
+    case 'VALUATION_PROVENANCE_UNVERIFIED':
+      return 'the valuation-provenance evidence limitation';
+    case 'EVIDENCE_STALENESS_LIMITATION':
+      return 'the evidence-freshness limitation';
     case 'RESEARCH_LIMITATION':
       return 'an authorized research limitation';
   }

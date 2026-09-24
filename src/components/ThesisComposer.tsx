@@ -19,22 +19,34 @@ interface ThesisPreset {
 
 const THESIS_PRESETS: ThesisPreset[] = [
   {
-    id: 'nvda-valuation-expansion',
+    id: 'nvda-valuation-support',
     label: 'NVDA Valuation Support',
     category: 'US Equity Research',
     text: 'NVDA will sustain its upward price trajectory over the next 90 days as trading volume and total market capitalization continue to support elevated valuation multiples.',
   },
   {
-    id: 'nvda-multiple-compression',
-    label: 'NVDA Multiple Compression',
+    id: 'coin-volume-hypothesis',
+    label: 'COIN Volume Hypothesis',
     category: 'US Equity Research',
-    text: 'NVDA will face price pullbacks over the next 60 days as premium price-to-earnings and price-to-sales ratios become vulnerable to decelerating session volume.',
+    text: 'COIN will advance over the next 60 days on the hypothesis that trading activity expands despite a negative source-reported trailing price-to-earnings ratio.',
   },
   {
-    id: 'nvda-session-momentum',
-    label: 'NVDA Session Momentum',
+    id: 'msft-enterprise-stability',
+    label: 'MSFT Enterprise Stability',
     category: 'US Equity Research',
-    text: 'NVDA will extend its positive session momentum over the next 30 days supported by trading volume and stable enterprise valuation multiples.',
+    text: 'MSFT will maintain steady upward price action over the next 90 days supported by consistent enterprise valuation multiples and resilient session volume.',
+  },
+  {
+    id: 'tsla-multiple-compression',
+    label: 'TSLA Multiple Compression',
+    category: 'US Equity Research',
+    text: 'TSLA will face price pullbacks over the next 30 days as high price-to-earnings multiples face headwinds from moderating trading activity.',
+  },
+  {
+    id: 'mstr-multiple-scrutiny',
+    label: 'MSTR Multiple Scrutiny',
+    category: 'US Equity Research',
+    text: 'MSTR will experience downward price pressure over the next 60 days on the hypothesis that elevated price-to-sales ratios and negative operating multiples invite valuation compression.',
   },
 ];
 
@@ -100,7 +112,7 @@ export function ThesisComposer({
           </h1>
 
           <p className="text-sm sm:text-base text-muted-foreground leading-relaxed max-w-2xl mx-auto font-sans text-balance">
-            Dissent extracts your market thesis for native US equities (NVDA/USD), pulls verifiable market quotes and fundamental valuation ratios from Bitget,
+            Dissent extracts your market thesis for native US equities (NVDA, COIN, MSFT, MSTR, TSLA, AAPL, AMD, META), pulls verifiable market quotes and fundamental valuation ratios from Bitget,
             constructs grounded supporting and counter-arguments, and stress-tests underlying assumptions.
           </p>
         </header>

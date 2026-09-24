@@ -12,6 +12,7 @@ import {
   SANITY_MCP_QUOTE_RESPONSE,
   SANITY_MCP_RATIOS_RESPONSE,
 } from '../fixtures/bitget-mcp-nvda.fixtures';
+import { createMultiEquityMcpResponse } from '../fixtures/bitget-mcp-multi-equity.fixtures';
 import { QueueModel, FIXED_AT } from '../server/ai/fixtures';
 import type { StructuredThesisV1 } from '@/core/contracts/thesis';
 import { createArgumentSelectionPlanOutputSchema } from '@/server/ai/ai-output.schemas';
@@ -396,12 +397,12 @@ describe('NVDA US-Equity Research Integration Acceptance', () => {
       }
     });
 
-    it('rejects unsupported equity ticker theses (e.g. AAPL, TSLA)', async () => {
+    it('rejects unsupported equity ticker theses (e.g. GOOGL, SPY)', async () => {
       const model = new QueueModel([
         {
           ...nvdaThesisExtractionOutput,
           supported: false,
-          unsupportedReason: 'AAPL is not a supported equity market in Dissent',
+          unsupportedReason: 'GOOGL is not a supported equity market in Dissent',
           market: null,
           baseAsset: null,
           quoteAsset: null,
@@ -411,7 +412,7 @@ describe('NVDA US-Equity Research Integration Acceptance', () => {
 
       await expect(
         executeResearchSubmission(
-          { thesis: 'AAPL will outperform next quarter' },
+          { thesis: 'GOOGL will outperform next quarter' },
           { model, now: () => NOW_DATE }
         )
       ).rejects.toMatchObject({
@@ -633,6 +634,396 @@ describe('NVDA US-Equity Research Integration Acceptance', () => {
       expect(
         tamperedWithCryptoSource.every((i) => isPermittedEquitySource(i.provenance.sourceName))
       ).toBe(false);
+    });
+  });
+
+  describe('Multi-Stock Universe Acceptance (COIN, MSFT, MSTR)', () => {
+    function mockMultiEquityFetch() {
+      return (async (_input: URL | RequestInfo, init?: RequestInit): Promise<Response> => {
+        const bodyStr = typeof init?.body === 'string' ? init.body : '';
+        const bodyJson = bodyStr ? JSON.parse(bodyStr) : {};
+        const method = bodyJson.method;
+
+        if (method === 'initialize') {
+          return new Response(JSON.stringify(SANITY_MCP_INIT_RESPONSE), {
+            status: 200,
+            headers: {
+              'Content-Type': 'application/json',
+              'mcp-session-id': 'test-session-multi-acc',
+            },
+          });
+        }
+
+        if (method === 'tools/call') {
+          const entryId = bodyJson.params?.arguments?.entry_id as
+            | 'equity_price_quote'
+            | 'equity_fundamental_ratios';
+          const symbol = (bodyJson.params?.arguments?.params?.symbol ??
+            bodyJson.params?.arguments?.symbol) as string;
+          const payload = createMultiEquityMcpResponse(symbol, entryId);
+          return new Response(JSON.stringify(payload), {
+            status: 200,
+            headers: {
+              'Content-Type': 'application/json',
+              'mcp-session-id': 'test-session-multi-acc',
+            },
+          });
+        }
+
+        return new Response(
+          JSON.stringify({ jsonrpc: '2.0', id: 0, error: { code: -32600, message: 'Invalid' } }),
+          { status: 400 }
+        );
+      }) as typeof fetch;
+    }
+
+    it('executes full COIN/USD research with negative P/E and null dividend yield', async () => {
+      const fetch = mockMultiEquityFetch();
+      const client = new BitgetMcpClient({ fetch, timeoutMs: 2000 });
+      const equityAdapter = new BitgetEquityAdapter({ client, now: () => NOW_DATE });
+      const marketDesk = new CompositeMarketAdapter({ equityAdapter });
+
+      const coinExtraction = {
+        supported: true,
+        unsupportedReason: null,
+        market: 'COIN/USD',
+        baseAsset: 'COIN',
+        quoteAsset: 'USD',
+        claim: 'COIN will advance on crypto trading activity despite current operating deficit',
+        direction: 'LONG',
+        timeHorizon: { description: '60 days', estimatedHours: 1440 },
+        catalysts: ['trading volume surge'],
+        assumptions: [
+          {
+            claim: 'Transaction volume will expand significantly',
+            type: 'EXPLICIT',
+            category: 'MARKET_REGIME',
+            challenge: 'Broader digital asset market volumes stagnate',
+            invalidationCondition: 'Reported exchange transaction volume drops',
+          },
+        ],
+      };
+
+      const model = new QueueModel([
+        coinExtraction,
+        advocateSelectionPlanFromRequest,
+        dissentSelectionPlanFromRequest,
+        nvdaAssumptionAssessmentsFromRequest,
+        (req: StructuredModelRequest<any>) => ({
+          scenarios: [
+            {
+              name: 'Crypto volume decline',
+              hypotheticalChange: 'Digital asset trading volumes decrease substantially',
+              affectedAssumptionIds: [(req.userPayload.testedAssumptions as any)[0].id],
+              relevantEvidenceIds: [(req.userPayload.evidenceCatalog as any)[0].id],
+              relevantArgumentPointIds: [(req.userPayload.arguments as any)[0].points[0].id],
+              transmissionMechanism: 'Volume decline directly reduces transaction fees and overall net revenue',
+              scenarioType: 'MACRO_REGIME_CHANGE',
+              plausibility: 'MEDIUM',
+              consequenceForThesis: 'Net revenue contracts and negative operating margins widen',
+              uncertainties: ['Retail participation cycle is unpredictable'],
+            },
+            {
+              name: 'Operating expense escalation',
+              hypotheticalChange: 'Administrative and regulatory costs scale higher',
+              affectedAssumptionIds: [(req.userPayload.testedAssumptions as any)[0].id],
+              relevantEvidenceIds: [(req.userPayload.evidenceCatalog as any)[0].id],
+              relevantArgumentPointIds: [(req.userPayload.arguments as any)[0].points[0].id],
+              transmissionMechanism: 'Higher cost structure reduces operating leverage and cash generation',
+              scenarioType: 'ASSET_SPECIFIC_EVENT',
+              plausibility: 'LOW',
+              consequenceForThesis: 'Earnings deficits deepen further',
+              uncertainties: ['Regulatory compliance spending varies'],
+            },
+          ],
+          invalidationConditions: [
+            {
+              targetAssumptionIds: [(req.userPayload.testedAssumptions as any)[0].id],
+              relevantEvidenceIds: [(req.userPayload.evidenceCatalog as any)[0].id],
+              statement: 'COIN session price falls below recent baseline',
+              observableEvent: 'Market price records negative momentum',
+              verificationSourceKind: 'BITGET_MARKET_DATA',
+              expectedWindow: 'THESIS_HORIZON',
+            },
+          ],
+        }),
+        (req: StructuredModelRequest<any>) => ({
+          dissentPointClassifications: (req.userPayload.dissentCase as any).points.map((p: any) => ({
+            dissentPointId: p.id,
+            classification: 'EVIDENCE_LIMITATION',
+            targetType: 'ASSUMPTION',
+            targetId: p.targetAssumptionIds[0] ?? (req.userPayload.thesis as any).id,
+            evidenceId: p.evidenceIds[0],
+            explanation: 'Negative trailing twelve-month P/E indicates past operating loss',
+            severity: null,
+          })),
+          unknowns: [
+            'Forward digital asset trading velocity remains unobserved in the market desk feed',
+            'Exchange quote observations lack authentic trade execution timestamps',
+          ],
+        }),
+      ]);
+
+      const response = await executeResearchSubmission(
+        { thesis: 'COIN will advance on crypto trading activity over the next 60 days' },
+        { model, marketDesk, now: () => NOW_DATE }
+      );
+
+      expect(response.ok).toBe(true);
+      expect(response.state).toBe('COMPLETED');
+      expect(response.brief.humanDecision).toBeNull();
+      expect(response.brief.structuredThesis.market).toBe('COIN/USD');
+      expect(response.brief.structuredThesis.baseAsset).toBe('COIN');
+
+      // Verify negative ratio in evidence ledger
+      const peItem = response.brief.evidenceLedger.items.find(
+        (i) => i.observation.type === 'VALUATION_PE_TTM'
+      );
+      expect(peItem).toBeDefined();
+      expect(peItem?.value).toBe(-52.9242);
+      expect(peItem?.unit).toBe('RATIO');
+
+      // Verify exactly 5 distinct grounded points per side
+      expect(response.advocateCase.points).toHaveLength(5);
+      const advocateTitles = new Set(response.advocateCase.points.map((p) => p.title));
+      expect(advocateTitles.size).toBe(5);
+
+      expect(response.brief.theDissent.points).toHaveLength(5);
+      const dissentTitles = new Set(response.brief.theDissent.points.map((p) => p.title));
+      expect(dissentTitles.size).toBe(5);
+    });
+
+    it('executes full MSFT/USD research with standard positive ratios', async () => {
+      const fetch = mockMultiEquityFetch();
+      const client = new BitgetMcpClient({ fetch, timeoutMs: 2000 });
+      const equityAdapter = new BitgetEquityAdapter({ client, now: () => NOW_DATE });
+      const marketDesk = new CompositeMarketAdapter({ equityAdapter });
+
+      const msftExtraction = {
+        supported: true,
+        unsupportedReason: null,
+        market: 'MSFT/USD',
+        baseAsset: 'MSFT',
+        quoteAsset: 'USD',
+        claim: 'MSFT will maintain steady upward price action backed by enterprise valuation multiples',
+        direction: 'LONG',
+        timeHorizon: { description: '90 days', estimatedHours: 2160 },
+        catalysts: ['enterprise software demand'],
+        assumptions: [
+          {
+            claim: 'Commercial cloud growth remains above 20 percent',
+            type: 'EXPLICIT',
+            category: 'MARKET_REGIME',
+            challenge: 'Cloud spending moderation',
+            invalidationCondition: 'Quarterly report shows deceleration in cloud revenue',
+          },
+        ],
+      };
+
+      const model = new QueueModel([
+        msftExtraction,
+        advocateSelectionPlanFromRequest,
+        dissentSelectionPlanFromRequest,
+        nvdaAssumptionAssessmentsFromRequest,
+        (req: StructuredModelRequest<any>) => ({
+          scenarios: [
+            {
+              name: 'Enterprise IT spending slowdown',
+              hypotheticalChange: 'Corporate IT budgets tighten amid economic uncertainty',
+              affectedAssumptionIds: [(req.userPayload.testedAssumptions as any)[0].id],
+              relevantEvidenceIds: [(req.userPayload.evidenceCatalog as any)[0].id],
+              relevantArgumentPointIds: [(req.userPayload.arguments as any)[0].points[0].id],
+              transmissionMechanism: 'Deferred software licensing agreements reduce quarterly revenue expansion',
+              scenarioType: 'MACRO_REGIME_CHANGE',
+              plausibility: 'MEDIUM',
+              consequenceForThesis: 'Topline growth moderates below consensus expectations',
+              uncertainties: ['Contract renewal cycles provide recurring revenue cushion'],
+            },
+            {
+              name: 'Capital expenditure cost expansion',
+              hypotheticalChange: 'Data center infrastructure investments outpace near-term returns',
+              affectedAssumptionIds: [(req.userPayload.testedAssumptions as any)[0].id],
+              relevantEvidenceIds: [(req.userPayload.evidenceCatalog as any)[0].id],
+              relevantArgumentPointIds: [(req.userPayload.arguments as any)[0].points[0].id],
+              transmissionMechanism: 'Higher infrastructure depreciation and energy expenses compress operating margins',
+              scenarioType: 'ASSET_SPECIFIC_EVENT',
+              plausibility: 'LOW',
+              consequenceForThesis: 'Operating margins decrease despite stable revenue',
+              uncertainties: ['Capex pacing can be adjusted across quarters'],
+            },
+          ],
+          invalidationConditions: [
+            {
+              targetAssumptionIds: [(req.userPayload.testedAssumptions as any)[0].id],
+              relevantEvidenceIds: [(req.userPayload.evidenceCatalog as any)[0].id],
+              statement: 'MSFT session price trends break below recent baseline',
+              observableEvent: 'Bitget quote shows persistent downward price momentum',
+              verificationSourceKind: 'BITGET_MARKET_DATA',
+              expectedWindow: 'THESIS_HORIZON',
+            },
+          ],
+        }),
+        (req: StructuredModelRequest<any>) => ({
+          dissentPointClassifications: (req.userPayload.dissentCase as any).points.map((p: any) => ({
+            dissentPointId: p.id,
+            classification: 'EVIDENCE_LIMITATION',
+            targetType: 'ASSUMPTION',
+            targetId: p.targetAssumptionIds[0] ?? (req.userPayload.thesis as any).id,
+            evidenceId: p.evidenceIds[0],
+            explanation: 'Historical valuation multiple context does not guarantee forward earnings growth',
+            severity: null,
+          })),
+          unknowns: [
+            'Enterprise backlog data remains private to corporate customers',
+            'Exchange quote observations lack authentic trade execution timestamps',
+          ],
+        }),
+      ]);
+
+      const response = await executeResearchSubmission(
+        { thesis: 'MSFT will maintain steady upward price action over the next 90 days' },
+        { model, marketDesk, now: () => NOW_DATE }
+      );
+
+      expect(response.ok).toBe(true);
+      expect(response.state).toBe('COMPLETED');
+      expect(response.brief.humanDecision).toBeNull();
+      expect(response.brief.structuredThesis.market).toBe('MSFT/USD');
+      expect(response.brief.structuredThesis.baseAsset).toBe('MSFT');
+
+      const peItem = response.brief.evidenceLedger.items.find(
+        (i) => i.observation.type === 'VALUATION_PE_TTM'
+      );
+      expect(peItem).toBeDefined();
+      expect(peItem?.value).toBe(35.8157);
+
+      expect(response.advocateCase.points).toHaveLength(5);
+      const advocateTitles = new Set(response.advocateCase.points.map((p) => p.title));
+      expect(advocateTitles.size).toBe(5);
+
+      expect(response.brief.theDissent.points).toHaveLength(5);
+      const dissentTitles = new Set(response.brief.theDissent.points.map((p) => p.title));
+      expect(dissentTitles.size).toBe(5);
+    });
+
+    it('executes full MSTR/USD SHORT research with multiple negative valuation ratios', async () => {
+      const fetch = mockMultiEquityFetch();
+      const client = new BitgetMcpClient({ fetch, timeoutMs: 2000 });
+      const equityAdapter = new BitgetEquityAdapter({ client, now: () => NOW_DATE });
+      const marketDesk = new CompositeMarketAdapter({ equityAdapter });
+
+      const mstrExtraction = {
+        supported: true,
+        unsupportedReason: null,
+        market: 'MSTR/USD',
+        baseAsset: 'MSTR',
+        quoteAsset: 'USD',
+        claim: 'MSTR will experience downward price pressure as multiple compression takes effect',
+        direction: 'SHORT',
+        timeHorizon: { description: '60 days', estimatedHours: 1440 },
+        catalysts: ['valuation multiple compression'],
+        assumptions: [
+          {
+            claim: 'Valuation multiples will compress toward historical norms',
+            type: 'EXPLICIT',
+            category: 'MARKET_REGIME',
+            challenge: 'Persistent balance sheet premium continuation',
+            invalidationCondition: 'Price to sales ratio continues expanding',
+          },
+        ],
+      };
+
+      const model = new QueueModel([
+        mstrExtraction,
+        advocateSelectionPlanFromRequest,
+        dissentSelectionPlanFromRequest,
+        nvdaAssumptionAssessmentsFromRequest,
+        (req: StructuredModelRequest<any>) => ({
+          scenarios: [
+            {
+              name: 'Balance sheet premium expansion',
+              hypotheticalChange: 'Treasury reserve premium widens relative to net asset value',
+              affectedAssumptionIds: [(req.userPayload.testedAssumptions as any)[0].id],
+              relevantEvidenceIds: [(req.userPayload.evidenceCatalog as any)[0].id],
+              relevantArgumentPointIds: [(req.userPayload.arguments as any)[0].points[0].id],
+              transmissionMechanism: 'Higher investor demand for treasury reserves expands the valuation premium',
+              scenarioType: 'MACRO_REGIME_CHANGE',
+              plausibility: 'MEDIUM',
+              consequenceForThesis: 'Stock prices advance instead of compressing downward',
+              uncertainties: ['Treasury asset volatility drives premium fluctuations'],
+            },
+            {
+              name: 'Capital market financing access',
+              hypotheticalChange: 'Favorable convertible debt issuance extends liquidity',
+              affectedAssumptionIds: [(req.userPayload.testedAssumptions as any)[0].id],
+              relevantEvidenceIds: [(req.userPayload.evidenceCatalog as any)[0].id],
+              relevantArgumentPointIds: [(req.userPayload.arguments as any)[0].points[0].id],
+              transmissionMechanism: 'Low-cost debt financing reduces immediate cash flow stress',
+              scenarioType: 'ASSET_SPECIFIC_EVENT',
+              plausibility: 'LOW',
+              consequenceForThesis: 'Short thesis faces extended timeline risk',
+              uncertainties: ['Fixed income investor appetite for convertibles changes'],
+            },
+          ],
+          invalidationConditions: [
+            {
+              targetAssumptionIds: [(req.userPayload.testedAssumptions as any)[0].id],
+              relevantEvidenceIds: [(req.userPayload.evidenceCatalog as any)[0].id],
+              statement: 'MSTR session price rallies above recent baseline',
+              observableEvent: 'Bitget quote records strong upward price momentum',
+              verificationSourceKind: 'BITGET_MARKET_DATA',
+              expectedWindow: 'THESIS_HORIZON',
+            },
+          ],
+        }),
+        (req: StructuredModelRequest<any>) => ({
+          dissentPointClassifications: (req.userPayload.dissentCase as any).points.map((p: any) => ({
+            dissentPointId: p.id,
+            classification: 'EVIDENCE_LIMITATION',
+            targetType: 'ASSUMPTION',
+            targetId: p.targetAssumptionIds[0] ?? (req.userPayload.thesis as any).id,
+            evidenceId: p.evidenceIds[0],
+            explanation: 'Historical valuation context does not establish future short direction',
+            severity: null,
+          })),
+          unknowns: [
+            'Direct balance-sheet asset holdings and mark-to-market changes were not retrieved',
+            'Exchange quote observations lack authentic trade execution timestamps',
+          ],
+        }),
+      ]);
+
+      const response = await executeResearchSubmission(
+        { thesis: 'MSTR will experience downward price pressure over the next 60 days' },
+        { model, marketDesk, now: () => NOW_DATE }
+      );
+
+      expect(response.ok).toBe(true);
+      expect(response.state).toBe('COMPLETED');
+      expect(response.brief.humanDecision).toBeNull();
+      expect(response.brief.structuredThesis.market).toBe('MSTR/USD');
+      expect(response.brief.structuredThesis.direction).toBe('SHORT');
+
+      // Verify negative valuation metrics
+      const peItem = response.brief.evidenceLedger.items.find(
+        (i) => i.observation.type === 'VALUATION_PE_TTM'
+      );
+      const evItem = response.brief.evidenceLedger.items.find(
+        (i) => i.observation.type === 'VALUATION_EV_EBITDA'
+      );
+      expect(peItem).toBeDefined();
+      expect(peItem?.value).toBe(-1.9934);
+      expect(evItem).toBeDefined();
+      expect(evItem?.value).toBe(-12.7712);
+
+      // Verify 5 distinct points per side
+      expect(response.advocateCase.points).toHaveLength(5);
+      const advocateTitles = new Set(response.advocateCase.points.map((p) => p.title));
+      expect(advocateTitles.size).toBe(5);
+
+      expect(response.brief.theDissent.points).toHaveLength(5);
+      const dissentTitles = new Set(response.brief.theDissent.points.map((p) => p.title));
+      expect(dissentTitles.size).toBe(5);
     });
   });
 });

@@ -31,6 +31,8 @@ loadEnvConfig(process.cwd());
 const runLive = process.env.RUN_APP_API_LIVE === '1';
 const NVDA_USD_LIVE_THESIS =
   'NVDA will sustain its upward price trajectory over the next 90 days as trading volume and total market capitalization continue to support elevated valuation multiples.';
+const MSTR_USD_LIVE_THESIS =
+  'MSTR will experience downward price pressure over the next 60 days on the hypothesis that elevated price-to-sales ratios and negative operating multiples invite valuation compression.';
 const ETH_BTC_LIVE_THESIS =
   'I think ETH will outperform BTC over the next 48 hours because risk appetite is improving and ETH momentum is strengthening.';
 const SOL_BTC_LIVE_THESIS =
@@ -44,11 +46,13 @@ describe.skipIf(!runLive)('Live application API', () => {
     const thesis =
       liveResearchMarket === 'NVDA/USD'
         ? NVDA_USD_LIVE_THESIS
-        : liveResearchMarket === 'SOL/BTC'
-          ? SOL_BTC_LIVE_THESIS
-          : liveResearchMarket === 'SOL/USDT'
-            ? SOL_USDT_LIVE_THESIS
-            : ETH_BTC_LIVE_THESIS;
+        : liveResearchMarket === 'MSTR/USD'
+          ? MSTR_USD_LIVE_THESIS
+          : liveResearchMarket === 'SOL/BTC'
+            ? SOL_BTC_LIVE_THESIS
+            : liveResearchMarket === 'SOL/USDT'
+              ? SOL_USDT_LIVE_THESIS
+              : ETH_BTC_LIVE_THESIS;
     const completedModelCalls: ModelCallMetadata[] = [];
     const attemptedModelCalls: AttemptedModelCall[] = [];
     const deepSeek = new DeepSeekResponsesClient();
@@ -158,7 +162,7 @@ describe.skipIf(!runLive)('Live application API', () => {
     expect(research.brief.assumptions.length).toBeGreaterThan(0);
     expect(research.brief.stressScenarios.length).toBeGreaterThanOrEqual(2);
     expect(research.brief.invalidationConditions.length).toBeGreaterThan(0);
-    if (liveResearchMarket === 'NVDA/USD') {
+    if (liveResearchMarket === 'NVDA/USD' || liveResearchMarket === 'MSTR/USD') {
       expect(
         research.brief.evidenceLedger.items.every(
           (item) =>
@@ -310,6 +314,63 @@ describe.skipIf(!runLive)('Live application API', () => {
       expect(research.advocateCase.points).toHaveLength(5);
       expect(research.brief.theDissent.points).toHaveLength(5);
       expect(research.brief.stressScenarios).toHaveLength(2);
+    }
+
+    if (liveResearchMarket === 'MSTR/USD') {
+      expect(research.brief.structuredThesis).toMatchObject({
+        market: 'MSTR/USD',
+        baseAsset: 'MSTR',
+        quoteAsset: 'USD',
+        direction: 'SHORT',
+      });
+      const evidence = research.brief.evidenceLedger.items;
+      expect(new Set(evidence.map((item) => item.observation.market))).toEqual(
+        new Set(['MSTR/USD'])
+      );
+      expect(evidence.length).toBeGreaterThanOrEqual(6);
+
+      // Quote observation time unknown
+      const quoteItems = evidence.filter(
+        (i) => i.provenance.freshnessMode === 'UNKNOWN_OBSERVATION_TIME'
+      );
+      expect(quoteItems.length).toBeGreaterThanOrEqual(2);
+      expect(quoteItems.every((i) => i.provenance.observedAt === null)).toBe(true);
+
+      // Bitget MCP source provenance
+      expect(
+        evidence.every(
+          (i) =>
+            i.provenance.sourceName === 'bitget-mcp-server' ||
+            i.provenance.sourceName === 'Dissent Deterministic Analytics'
+        )
+      ).toBe(true);
+      expect(evidence.some((i) => i.provenance.sourceName === 'bitget-mcp-server')).toBe(true);
+
+      // Negative valuation metrics when actually returned
+      const valuationItems = evidence.filter(
+        (i) => i.category === 'VALUATION_METRIC' && typeof i.value === 'number'
+      );
+      const negativeValuations = valuationItems.filter((i) => (i.value as number) < 0);
+      if (negativeValuations.length > 0) {
+        expect(
+          negativeValuations.every(
+            (i) => i.unit === 'RATIO' && i.provenance.freshnessMode === 'HISTORICAL_RECORD'
+          )
+        ).toBe(true);
+      }
+
+      // Five distinct grounded points per argument
+      expect(research.advocateCase.points).toHaveLength(5);
+      const advocateTitles = new Set(research.advocateCase.points.map((p) => p.title));
+      expect(advocateTitles.size).toBe(5);
+
+      expect(research.brief.theDissent.points).toHaveLength(5);
+      const dissentTitles = new Set(research.brief.theDissent.points.map((p) => p.title));
+      expect(dissentTitles.size).toBe(5);
+
+      // Complete validated Brief and humanDecision === null
+      expect(research.brief.stressScenarios).toHaveLength(2);
+      expect(research.brief.humanDecision).toBeNull();
     }
 
     const thesisHours = research.brief.structuredThesis.timeHorizon.estimatedHours;

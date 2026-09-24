@@ -1,7 +1,16 @@
 export const SUPPORTED_CRYPTO_ASSETS = ['BTC', 'ETH', 'SOL'] as const;
 export type SupportedCryptoAsset = (typeof SUPPORTED_CRYPTO_ASSETS)[number];
 
-export const SUPPORTED_EQUITY_ASSETS = ['NVDA'] as const;
+export const SUPPORTED_EQUITY_ASSETS = [
+  'NVDA',
+  'COIN',
+  'MSFT',
+  'MSTR',
+  'TSLA',
+  'AAPL',
+  'AMD',
+  'META',
+] as const;
 export type SupportedEquityAsset = (typeof SUPPORTED_EQUITY_ASSETS)[number];
 
 export const SUPPORTED_RESEARCH_ASSETS = [

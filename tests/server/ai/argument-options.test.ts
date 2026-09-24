@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { EvidenceLedgerV1, EvidenceV1 } from '@/core/contracts/evidence';
+import type { StructuredThesisV1 } from '@/core/contracts/thesis';
 import { assertArgumentEvidenceGrounding } from '@/core/domain/invariants';
 import { DissentError } from '@/core/errors/domain-errors';
 import {
@@ -33,6 +34,12 @@ function evidence(input: {
   interval?: boolean;
   category?: EvidenceV1['category'];
   relatedAssumptionIds?: string[];
+  instrumentType?: EvidenceV1['observation']['instrumentType'];
+  freshnessMode?: EvidenceV1['provenance']['freshnessMode'];
+  value?: string | number;
+  unit?: string;
+  reportingPeriod?: string;
+  sourceName?: string;
 }): EvidenceV1 {
   const interval = input.interval ?? true;
   return {
@@ -47,12 +54,15 @@ function evidence(input: {
     observation: {
       type: input.type,
       market: input.market ?? 'ETH/USDT',
-      instrumentType: ['FUNDING_RATE', 'OPEN_INTEREST'].includes(input.type)
-        ? 'PERPETUAL_FUTURES'
-        : ['RETURN_SPREAD', 'RELATIVE_RETURN'].includes(input.type)
-          ? 'DERIVED_SPOT_PAIR'
-          : 'SPOT',
+      instrumentType:
+        input.instrumentType ??
+        (['FUNDING_RATE', 'OPEN_INTEREST'].includes(input.type)
+          ? 'PERPETUAL_FUTURES'
+          : ['RETURN_SPREAD', 'RELATIVE_RETURN'].includes(input.type)
+            ? 'DERIVED_SPOT_PAIR'
+            : 'SPOT'),
       providerSymbol: input.id,
+      ...(input.reportingPeriod ? { reportingPeriod: input.reportingPeriod } : {}),
       ...(interval
         ? {
             interval: '1H',
@@ -62,18 +72,24 @@ function evidence(input: {
         : {}),
     },
     provenance: {
-      sourceName: 'Test evidence source',
+      sourceName: input.sourceName ?? 'Test evidence source',
       sourceType: ['RETURN_SPREAD', 'RELATIVE_RETURN'].includes(input.type)
         ? 'DERIVED_ANALYTICS'
         : 'EXCHANGE_API',
       endpointOrLocator: `test://${input.id}`,
-      observedAt: interval ? '2026-09-19T11:00:00.000Z' : FIXED_AT,
+      observedAt:
+        input.freshnessMode === 'UNKNOWN_OBSERVATION_TIME'
+          ? null
+          : (interval ? '2026-09-19T11:00:00.000Z' : FIXED_AT),
       retrievedAt: FIXED_AT,
-      freshnessMode: interval ? 'HISTORICAL_RECORD' : 'AGE_SINCE_OBSERVATION',
-      ...(interval ? {} : { freshnessWindowSeconds: 60 }),
+      freshnessMode:
+        input.freshnessMode ?? (interval ? 'HISTORICAL_RECORD' : 'AGE_SINCE_OBSERVATION'),
+      ...(interval || input.freshnessMode === 'UNKNOWN_OBSERVATION_TIME'
+        ? {}
+        : { freshnessWindowSeconds: 60 }),
     },
-    value: 'one',
-    unit: input.type === 'RETURN_SPREAD' ? 'percentage points' : 'test unit',
+    value: input.value ?? 'one',
+    unit: input.unit ?? (input.type === 'RETURN_SPREAD' ? 'percentage points' : 'test unit'),
     derivedFromEvidenceIds: ['RETURN_SPREAD', 'RELATIVE_RETURN'].includes(input.type)
       ? ['ev_single']
       : [],
@@ -619,5 +635,507 @@ describe('server-issued argument options', () => {
         createdAt: FIXED_AT,
       })
     ).toThrowError(DissentError);
+  });
+
+  describe('distinct argument option titles and 5-point materialization', () => {
+    function makeMstrEquityLedger(): EvidenceLedgerV1 {
+      return ledgerWith(
+        evidence({
+          id: 'ev_mstr_last',
+          type: 'LAST_PRICE',
+          market: 'MSTR/USD',
+          instrumentType: 'EQUITY_CASH',
+          interval: false,
+          freshnessMode: 'UNKNOWN_OBSERVATION_TIME',
+          value: 312.4,
+          unit: 'USD',
+        }),
+        evidence({
+          id: 'ev_mstr_change',
+          type: 'SESSION_PRICE_CHANGE',
+          market: 'MSTR/USD',
+          instrumentType: 'EQUITY_CASH',
+          interval: false,
+          freshnessMode: 'UNKNOWN_OBSERVATION_TIME',
+          value: 4.133,
+          unit: '%',
+        }),
+        evidence({
+          id: 'ev_mstr_sess_vol',
+          type: 'SESSION_VOLUME',
+          market: 'MSTR/USD',
+          instrumentType: 'EQUITY_CASH',
+          interval: false,
+          freshnessMode: 'UNKNOWN_OBSERVATION_TIME',
+          value: 980000,
+          unit: 'shares',
+        }),
+        evidence({
+          id: 'ev_mstr_base_vol',
+          type: 'BASE_VOLUME_24H',
+          market: 'MSTR/USD',
+          instrumentType: 'EQUITY_CASH',
+          interval: false,
+          freshnessMode: 'UNKNOWN_OBSERVATION_TIME',
+          value: 980000,
+          unit: 'MSTR',
+        }),
+        evidence({
+          id: 'ev_mstr_mcap',
+          type: 'MARKET_CAPITALIZATION',
+          category: 'VALUATION_METRIC',
+          market: 'MSTR/USD',
+          instrumentType: 'EQUITY_CASH',
+          interval: false,
+          freshnessMode: 'HISTORICAL_RECORD',
+          value: 65000000000,
+          unit: 'USD',
+        }),
+        evidence({
+          id: 'ev_mstr_pe_ttm',
+          type: 'VALUATION_PE_TTM',
+          category: 'VALUATION_METRIC',
+          market: 'MSTR/USD',
+          instrumentType: 'EQUITY_CASH',
+          interval: false,
+          freshnessMode: 'HISTORICAL_RECORD',
+          value: -1.9934,
+          unit: 'RATIO',
+          reportingPeriod: '2026-09-24',
+        }),
+        evidence({
+          id: 'ev_mstr_pe_lyr',
+          type: 'VALUATION_PE_LYR',
+          category: 'VALUATION_METRIC',
+          market: 'MSTR/USD',
+          instrumentType: 'EQUITY_CASH',
+          interval: false,
+          freshnessMode: 'HISTORICAL_RECORD',
+          value: -14.75,
+          unit: 'RATIO',
+          reportingPeriod: '2026-09-24',
+        }),
+        evidence({
+          id: 'ev_mstr_pb',
+          type: 'VALUATION_PB_RATIO',
+          category: 'VALUATION_METRIC',
+          market: 'MSTR/USD',
+          instrumentType: 'EQUITY_CASH',
+          interval: false,
+          freshnessMode: 'HISTORICAL_RECORD',
+          value: 2.85,
+          unit: 'RATIO',
+          reportingPeriod: '2026-09-24',
+        }),
+        evidence({
+          id: 'ev_mstr_ev',
+          type: 'VALUATION_EV_EBITDA',
+          category: 'VALUATION_METRIC',
+          market: 'MSTR/USD',
+          instrumentType: 'EQUITY_CASH',
+          interval: false,
+          freshnessMode: 'HISTORICAL_RECORD',
+          value: -12.7712,
+          unit: 'RATIO',
+          reportingPeriod: '2026-09-24',
+        }),
+        evidence({
+          id: 'ev_mstr_ps',
+          type: 'VALUATION_PS_TTM',
+          category: 'VALUATION_METRIC',
+          market: 'MSTR/USD',
+          instrumentType: 'EQUITY_CASH',
+          interval: false,
+          freshnessMode: 'HISTORICAL_RECORD',
+          value: 135.21,
+          unit: 'RATIO',
+          reportingPeriod: '2026-09-24',
+        })
+      );
+    }
+
+    function makeMstrThesis(direction: 'LONG' | 'SHORT' = 'SHORT'): StructuredThesisV1 {
+      return {
+        ...makeStructuredThesis(),
+        originalThesis:
+          'MSTR will experience downward price pressure as multiple compression takes effect.',
+        market: 'MSTR/USD',
+        baseAsset: 'MSTR',
+        quoteAsset: 'USD',
+        claim: 'MSTR will experience downward price pressure over the stated horizon',
+        direction,
+        timeHorizon: { description: '60 days', estimatedHours: 1440 },
+        catalysts: ['valuation multiple compression'],
+      };
+    }
+
+    function makeNvdaEquityLedger(): EvidenceLedgerV1 {
+      return ledgerWith(
+        evidence({
+          id: 'ev_nvda_last',
+          type: 'LAST_PRICE',
+          market: 'NVDA/USD',
+          instrumentType: 'EQUITY_CASH',
+          interval: false,
+          freshnessMode: 'UNKNOWN_OBSERVATION_TIME',
+          value: 128.5,
+          unit: 'USD',
+        }),
+        evidence({
+          id: 'ev_nvda_change',
+          type: 'SESSION_PRICE_CHANGE',
+          market: 'NVDA/USD',
+          instrumentType: 'EQUITY_CASH',
+          interval: false,
+          freshnessMode: 'UNKNOWN_OBSERVATION_TIME',
+          value: 3.2,
+          unit: '%',
+        }),
+        evidence({
+          id: 'ev_nvda_sess_vol',
+          type: 'SESSION_VOLUME',
+          market: 'NVDA/USD',
+          instrumentType: 'EQUITY_CASH',
+          interval: false,
+          freshnessMode: 'UNKNOWN_OBSERVATION_TIME',
+          value: 50000000,
+          unit: 'shares',
+        }),
+        evidence({
+          id: 'ev_nvda_base_vol',
+          type: 'BASE_VOLUME_24H',
+          market: 'NVDA/USD',
+          instrumentType: 'EQUITY_CASH',
+          interval: false,
+          freshnessMode: 'UNKNOWN_OBSERVATION_TIME',
+          value: 50000000,
+          unit: 'NVDA',
+        }),
+        evidence({
+          id: 'ev_nvda_mcap',
+          type: 'MARKET_CAPITALIZATION',
+          category: 'VALUATION_METRIC',
+          market: 'NVDA/USD',
+          instrumentType: 'EQUITY_CASH',
+          interval: false,
+          freshnessMode: 'HISTORICAL_RECORD',
+          value: 3000000000000,
+          unit: 'USD',
+        }),
+        evidence({
+          id: 'ev_nvda_pe_ttm',
+          type: 'VALUATION_PE_TTM',
+          category: 'VALUATION_METRIC',
+          market: 'NVDA/USD',
+          instrumentType: 'EQUITY_CASH',
+          interval: false,
+          freshnessMode: 'HISTORICAL_RECORD',
+          value: 45.2,
+          unit: 'RATIO',
+          reportingPeriod: '2026-09-24',
+        }),
+        evidence({
+          id: 'ev_nvda_pe_lyr',
+          type: 'VALUATION_PE_LYR',
+          category: 'VALUATION_METRIC',
+          market: 'NVDA/USD',
+          instrumentType: 'EQUITY_CASH',
+          interval: false,
+          freshnessMode: 'HISTORICAL_RECORD',
+          value: 65.0,
+          unit: 'RATIO',
+          reportingPeriod: '2026-09-24',
+        }),
+        evidence({
+          id: 'ev_nvda_pb',
+          type: 'VALUATION_PB_RATIO',
+          category: 'VALUATION_METRIC',
+          market: 'NVDA/USD',
+          instrumentType: 'EQUITY_CASH',
+          interval: false,
+          freshnessMode: 'HISTORICAL_RECORD',
+          value: 38.5,
+          unit: 'RATIO',
+          reportingPeriod: '2026-09-24',
+        }),
+        evidence({
+          id: 'ev_nvda_ev',
+          type: 'VALUATION_EV_EBITDA',
+          category: 'VALUATION_METRIC',
+          market: 'NVDA/USD',
+          instrumentType: 'EQUITY_CASH',
+          interval: false,
+          freshnessMode: 'HISTORICAL_RECORD',
+          value: 35.8,
+          unit: 'RATIO',
+          reportingPeriod: '2026-09-24',
+        }),
+        evidence({
+          id: 'ev_nvda_ps',
+          type: 'VALUATION_PS_TTM',
+          category: 'VALUATION_METRIC',
+          market: 'NVDA/USD',
+          instrumentType: 'EQUITY_CASH',
+          interval: false,
+          freshnessMode: 'HISTORICAL_RECORD',
+          value: 28.4,
+          unit: 'RATIO',
+          reportingPeriod: '2026-09-24',
+        })
+      );
+    }
+
+    function makeNvdaThesis(): StructuredThesisV1 {
+      return {
+        ...makeStructuredThesis(),
+        originalThesis: 'NVDA will expand on enterprise GPU infrastructure demand.',
+        market: 'NVDA/USD',
+        baseAsset: 'NVDA',
+        quoteAsset: 'USD',
+        claim: 'NVDA will expand on enterprise GPU demand over the stated horizon',
+        direction: 'LONG',
+        timeHorizon: { description: '90 days', estimatedHours: 2160 },
+        catalysts: ['datacenter GPU demand'],
+      };
+    }
+
+    function makeCryptoSpotAndPerpLedger(): EvidenceLedgerV1 {
+      return ledgerWith(
+        evidence({ id: 'ev_crypto_last', type: 'LAST_PRICE', interval: false, market: 'SOL/USDT' }),
+        evidence({ id: 'ev_crypto_p24', type: 'PRICE_CHANGE_24H', market: 'SOL/USDT' }),
+        evidence({ id: 'ev_crypto_vol', type: 'BASE_VOLUME_24H', market: 'SOL/USDT' }),
+        evidence({ id: 'ev_crypto_c_open', type: 'CANDLE_OPEN', market: 'SOL/USDT' }),
+        evidence({ id: 'ev_crypto_c_close', type: 'CANDLE_CLOSE', market: 'SOL/USDT' }),
+        evidence({ id: 'ev_crypto_ipc', type: 'INTERVAL_PRICE_CHANGE', market: 'SOL/USDT' }),
+        evidence({
+          id: 'ev_crypto_fr',
+          type: 'FUNDING_RATE',
+          interval: false,
+          category: 'FUNDING_RATE',
+          market: 'SOL/USDT',
+        }),
+        evidence({
+          id: 'ev_crypto_oi',
+          type: 'OPEN_INTEREST',
+          interval: false,
+          category: 'OPEN_INTEREST',
+          market: 'SOL/USDT',
+        })
+      );
+    }
+
+    it('confirms MSTR/USD negative-multiple equity ledger produces unique catalog titles and 5 distinct points per stance', async () => {
+      const thesis = makeMstrThesis('SHORT');
+      const ledger = makeMstrEquityLedger();
+      const assumptions = makeAssumptions();
+
+      const advocateOptions = authorizedArgumentPointCatalog({
+        thesis,
+        ledger,
+        assumptions,
+        stance: 'ADVOCATE',
+      });
+      const dissentOptions = authorizedArgumentPointCatalog({
+        thesis,
+        ledger,
+        assumptions,
+        stance: 'DISSENTER',
+      });
+
+      // All options in catalog must have pairwise distinct titles
+      const advocateCatalogTitles = advocateOptions.map((o) => o.title);
+      expect(new Set(advocateCatalogTitles).size).toBe(advocateCatalogTitles.length);
+
+      const dissentCatalogTitles = dissentOptions.map((o) => o.title);
+      expect(new Set(dissentCatalogTitles).size).toBe(dissentCatalogTitles.length);
+
+      // Verify specific limitation titles are present and distinct
+      expect(dissentCatalogTitles).toContain('Quote observation time is unverified');
+      expect(dissentCatalogTitles).toContain('Valuation metrics reflect provider reporting periods only');
+
+      // Specifically select 5 options including both limitations for DISSENTER
+      const quoteLimitation = dissentOptions.find(
+        (o) => o.title === 'Quote observation time is unverified'
+      )!;
+      const valuationLimitation = dissentOptions.find(
+        (o) => o.title === 'Valuation metrics reflect provider reporting periods only'
+      )!;
+      const otherDissentOptions = dissentOptions.filter(
+        (o) => o.optionId !== quoteLimitation.optionId && o.optionId !== valuationLimitation.optionId
+      );
+
+      const dissentPlan = {
+        primary: quoteLimitation.optionId,
+        secondaryA: valuationLimitation.optionId,
+        secondaryB: otherDissentOptions[0]!.optionId,
+        contextualA: otherDissentOptions[1]!.optionId,
+        contextualB: otherDissentOptions[2]!.optionId,
+      };
+
+      const dissent = materializeArgumentSelection({
+        operation: 'buildDissentCase',
+        stance: 'DISSENTER',
+        thesis,
+        ledger,
+        assumptions,
+        options: dissentOptions,
+        plan: dissentPlan,
+        createdAt: FIXED_AT,
+      });
+
+      expect(dissent.points).toHaveLength(5);
+      const dissentTitles = new Set(dissent.points.map((p) => p.title));
+      expect(dissentTitles.size).toBe(5);
+      expect(dissentTitles).toContain('Quote observation time is unverified');
+      expect(dissentTitles).toContain('Valuation metrics reflect provider reporting periods only');
+
+      // Materialize ADVOCATE with 5 distinct points
+      const advocatePlan = {
+        primary: advocateOptions[0]!.optionId,
+        secondaryA: advocateOptions[1]!.optionId,
+        secondaryB: advocateOptions[2]!.optionId,
+        contextualA: advocateOptions[3]!.optionId,
+        contextualB: advocateOptions[4]!.optionId,
+      };
+
+      const advocate = materializeArgumentSelection({
+        operation: 'buildAdvocateCase',
+        stance: 'ADVOCATE',
+        thesis,
+        ledger,
+        assumptions,
+        options: advocateOptions,
+        plan: advocatePlan,
+        createdAt: FIXED_AT,
+      });
+
+      expect(advocate.points).toHaveLength(5);
+      const advocateTitles = new Set(advocate.points.map((p) => p.title));
+      expect(advocateTitles.size).toBe(5);
+    });
+
+    it('confirms standard positive NVDA/USD equity ledger produces unique catalog titles and 5 distinct points per stance', async () => {
+      const thesis = makeNvdaThesis();
+      const ledger = makeNvdaEquityLedger();
+      const assumptions = makeAssumptions();
+
+      const advocateOptions = authorizedArgumentPointCatalog({
+        thesis,
+        ledger,
+        assumptions,
+        stance: 'ADVOCATE',
+      });
+      const dissentOptions = authorizedArgumentPointCatalog({
+        thesis,
+        ledger,
+        assumptions,
+        stance: 'DISSENTER',
+      });
+
+      expect(new Set(advocateOptions.map((o) => o.title)).size).toBe(advocateOptions.length);
+      expect(new Set(dissentOptions.map((o) => o.title)).size).toBe(dissentOptions.length);
+
+      const model = new QueueModel([
+        (req: Parameters<typeof argumentSelectionPlanFromRequest>[0]) =>
+          argumentSelectionPlanFromRequest(req, 5),
+        (req: Parameters<typeof argumentSelectionPlanFromRequest>[0]) =>
+          argumentSelectionPlanFromRequest(req, 5),
+      ]);
+      const analyst = new DeepSeekAnalystAdapter({
+        model,
+        now: () => new Date(FIXED_AT),
+      });
+
+      const advocate = await analyst.buildAdvocateCase(thesis, ledger, assumptions);
+      const dissent = await analyst.buildDissentCase(thesis, ledger, assumptions);
+
+      expect(advocate.points).toHaveLength(5);
+      expect(new Set(advocate.points.map((p) => p.title)).size).toBe(5);
+
+      expect(dissent.points).toHaveLength(5);
+      expect(new Set(dissent.points.map((p) => p.title)).size).toBe(5);
+    });
+
+    it('confirms single-asset and relative crypto ledgers produce unique catalog titles and 5 distinct points per stance', async () => {
+      const singleThesis = singleAssetThesis('LONG');
+      const cryptoLedger = makeCryptoSpotAndPerpLedger();
+      const assumptions = makeAssumptions();
+
+      const singleAdvocateOptions = authorizedArgumentPointCatalog({
+        thesis: singleThesis,
+        ledger: cryptoLedger,
+        assumptions,
+        stance: 'ADVOCATE',
+      });
+      const singleDissentOptions = authorizedArgumentPointCatalog({
+        thesis: singleThesis,
+        ledger: cryptoLedger,
+        assumptions,
+        stance: 'DISSENTER',
+      });
+
+      expect(new Set(singleAdvocateOptions.map((o) => o.title)).size).toBe(
+        singleAdvocateOptions.length
+      );
+      expect(new Set(singleDissentOptions.map((o) => o.title)).size).toBe(
+        singleDissentOptions.length
+      );
+
+      // Verify candle open/close, last price, and interval/24h price changes are all distinct titles
+      const singleTitles = singleAdvocateOptions.map((o) => o.title);
+      expect(singleTitles).toContain('Observed market-price context');
+      expect(singleTitles).toContain('Observed interval open price context');
+      expect(singleTitles).toContain('Observed interval close price context');
+      expect(singleTitles).toContain('Observed SOL historical price behavior');
+      expect(singleTitles).toContain('Observed SOL interval price change');
+
+      // Relative crypto thesis
+      const relativeThesis = makeStructuredThesis();
+      const relativeLedger = capabilityLedger();
+
+      const relAdvocateOptions = authorizedArgumentPointCatalog({
+        thesis: relativeThesis,
+        ledger: relativeLedger,
+        assumptions,
+        stance: 'ADVOCATE',
+      });
+      const relDissentOptions = authorizedArgumentPointCatalog({
+        thesis: relativeThesis,
+        ledger: relativeLedger,
+        assumptions,
+        stance: 'DISSENTER',
+      });
+
+      expect(new Set(relAdvocateOptions.map((o) => o.title)).size).toBe(relAdvocateOptions.length);
+      expect(new Set(relDissentOptions.map((o) => o.title)).size).toBe(relDissentOptions.length);
+
+      const model = new QueueModel([
+        (req: Parameters<typeof argumentSelectionPlanFromRequest>[0]) =>
+          argumentSelectionPlanFromRequest(req, 5),
+        (req: Parameters<typeof argumentSelectionPlanFromRequest>[0]) =>
+          argumentSelectionPlanFromRequest(req, 5),
+      ]);
+      const analyst = new DeepSeekAnalystAdapter({
+        model,
+        now: () => new Date(FIXED_AT),
+      });
+
+      const relAdvocate = await analyst.buildAdvocateCase(
+        relativeThesis,
+        relativeLedger,
+        assumptions
+      );
+      const relDissent = await analyst.buildDissentCase(
+        relativeThesis,
+        relativeLedger,
+        assumptions
+      );
+
+      expect(relAdvocate.points).toHaveLength(5);
+      expect(new Set(relAdvocate.points.map((p) => p.title)).size).toBe(5);
+
+      expect(relDissent.points).toHaveLength(5);
+      expect(new Set(relDissent.points.map((p) => p.title)).size).toBe(5);
+    });
   });
 });

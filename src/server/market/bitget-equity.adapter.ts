@@ -69,7 +69,7 @@ export class BitgetEquityAdapter implements MarketDeskPort {
     const market = thesis.market;
     if (!isEquityThesisMarket(market)) {
       throw DissentError.unsupportedMarket(market, {
-        reason: 'Bitget equity desk currently supports native NVDA/USD equity research only',
+        reason: 'Bitget equity desk currently supports native US equity research only',
       });
     }
 
@@ -80,15 +80,15 @@ export class BitgetEquityAdapter implements MarketDeskPort {
     }
 
     const definition = resolveSupportedThesisMarket(thesis);
-    if (!definition || definition.baseAsset !== 'NVDA') {
+    if (!definition || definition.assetClass !== 'EQUITY') {
       throw DissentError.unsupportedMarket(market, {
-        reason: 'Bitget equity desk currently supports native NVDA/USD equity research only',
+        reason: 'Bitget equity desk currently supports native US equity research only',
       });
     }
 
     const gaps: MarketResearchGap[] = [];
     const items: EvidenceV1[] = [];
-    const symbol = definition.baseAsset; // NVDA
+    const symbol = definition.baseAsset;
 
     // Query 1: equity_price_quote
     try {

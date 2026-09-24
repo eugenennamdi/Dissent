@@ -15,6 +15,10 @@ import {
   SANITY_MCP_RATIOS_RESPONSE,
   SANITY_MCP_TOOL_ERROR_RESPONSE,
 } from '../../fixtures/bitget-mcp-nvda.fixtures';
+import {
+  MULTI_EQUITY_FIXTURES,
+  createMultiEquityMcpResponse,
+} from '../../fixtures/bitget-mcp-multi-equity.fixtures';
 
 const NOW = new Date('2026-09-24T12:00:00.000Z');
 
@@ -196,7 +200,7 @@ describe('Bitget Equity MCP Adapter (Offline Unit Tests)', () => {
 
     // Unsupported stock
     await expect(
-      adapter.gatherMarketObservations(createNvdaThesis('LONG', 'AAPL/USD'))
+      adapter.gatherMarketObservations(createNvdaThesis('LONG', 'GOOGL/USD'))
     ).rejects.toMatchObject({ code: 'UNSUPPORTED_MARKET' });
 
     // Relative thesis direction for equity
@@ -307,5 +311,250 @@ describe('Bitget Equity MCP Adapter (Offline Unit Tests)', () => {
           endpoint: 'https://evil.com/mcp',
         })
     ).toThrow(DissentError);
+  });
+
+  describe('Multi-Stock Universe Expansion (8 Symbols)', () => {
+    const symbols = ['NVDA', 'COIN', 'MSFT', 'MSTR', 'TSLA', 'AAPL', 'AMD', 'META'] as const;
+
+    function mockMultiStockFetch() {
+      return (async (input: URL | RequestInfo, init?: RequestInit): Promise<Response> => {
+        const bodyStr = typeof init?.body === 'string' ? init.body : '';
+        const bodyJson = bodyStr ? JSON.parse(bodyStr) : {};
+        const method = bodyJson.method;
+
+        if (method === 'initialize') {
+          return new Response(JSON.stringify(SANITY_MCP_INIT_RESPONSE), {
+            status: 200,
+            headers: {
+              'Content-Type': 'application/json',
+              'mcp-session-id': 'test-session-multi',
+            },
+          });
+        }
+
+        if (method === 'tools/call') {
+          const entryId = bodyJson.params?.arguments?.entry_id as
+            | 'equity_price_quote'
+            | 'equity_fundamental_ratios';
+          const symbol = (bodyJson.params?.arguments?.params?.symbol ??
+            bodyJson.params?.arguments?.symbol) as string;
+          const payload = createMultiEquityMcpResponse(symbol, entryId);
+          return new Response(JSON.stringify(payload), {
+            status: 200,
+            headers: {
+              'Content-Type': 'application/json',
+              'mcp-session-id': 'test-session-multi',
+            },
+          });
+        }
+
+        return new Response(JSON.stringify({ error: 'unknown' }), { status: 404 });
+      }) as typeof fetch;
+    }
+
+    it.each(symbols)('gathers complete verified ledger for %s in LONG and SHORT', async (symbol) => {
+      const adapter = new BitgetEquityAdapter({
+        fetch: mockMultiStockFetch(),
+        now: () => NOW,
+      });
+
+      for (const direction of ['LONG', 'SHORT'] as const) {
+        const thesis: StructuredThesisV1 = {
+          id: `th_${symbol.toLowerCase()}_test`,
+          thesisInputId: `inp_${symbol.toLowerCase()}_test`,
+          originalThesis: `${symbol} test thesis across 90 days.`,
+          market: `${symbol}/USD`,
+          baseAsset: symbol,
+          quoteAsset: 'USD',
+          claim: `${symbol} test direction claim`,
+          direction,
+          timeHorizon: { description: '90 days' },
+          catalysts: [],
+          createdAt: NOW.toISOString(),
+          schemaVersion: 1,
+        };
+
+        const result = await adapter.gatherMarketObservations(thesis);
+        expect(result.complete).toBe(true);
+        expect(result.gaps).toHaveLength(0);
+        expect(result.ledger.items.length).toBeGreaterThanOrEqual(4);
+        assertEvidenceLedgerIntegrity(result.ledger);
+
+        const priceItem = result.ledger.items.find((i) => i.observation.type === 'LAST_PRICE');
+        expect(priceItem).toBeDefined();
+        expect(priceItem?.observation.market).toBe(`${symbol}/USD`);
+        expect(priceItem?.observation.providerSymbol).toBe(symbol);
+        expect(priceItem?.observation.instrumentType).toBe('EQUITY_CASH');
+        expect(priceItem?.provenance.sourceName).toBe('bitget-mcp-server');
+      }
+    });
+
+    it('correctly ingests negative ratios without loss of precision or altered provenance (COIN, MSTR)', async () => {
+      const adapter = new BitgetEquityAdapter({
+        fetch: mockMultiStockFetch(),
+        now: () => NOW,
+      });
+
+      // COIN has negative P/E (-52.9242)
+      const coinThesis: StructuredThesisV1 = {
+        id: 'th_coin_neg',
+        thesisInputId: 'inp_coin_neg',
+        originalThesis: 'COIN operating recovery thesis despite negative earnings.',
+        market: 'COIN/USD',
+        baseAsset: 'COIN',
+        quoteAsset: 'USD',
+        claim: 'COIN will advance',
+        direction: 'LONG',
+        timeHorizon: { description: '60 days' },
+        catalysts: [],
+        createdAt: NOW.toISOString(),
+        schemaVersion: 1,
+      };
+
+      const coinResult = await adapter.gatherMarketObservations(coinThesis);
+      const coinPeItem = coinResult.ledger.items.find(
+        (i) => i.observation.type === 'VALUATION_PE_TTM'
+      );
+      expect(coinPeItem).toBeDefined();
+      expect(coinPeItem?.value).toBe(-52.9242);
+      expect(coinPeItem?.unit).toBe('RATIO');
+      expect(coinPeItem?.claim).toContain('-52.9242x');
+
+      // MSTR has negative P/E (-1.9934), negative PE LYR (-14.75), and negative EV/EBITDA (-12.7712)
+      const mstrThesis: StructuredThesisV1 = {
+        id: 'th_mstr_neg',
+        thesisInputId: 'inp_mstr_neg',
+        originalThesis: 'MSTR valuation scrutiny thesis.',
+        market: 'MSTR/USD',
+        baseAsset: 'MSTR',
+        quoteAsset: 'USD',
+        claim: 'MSTR multiple scrutiny',
+        direction: 'SHORT',
+        timeHorizon: { description: '60 days' },
+        catalysts: [],
+        createdAt: NOW.toISOString(),
+        schemaVersion: 1,
+      };
+
+      const mstrResult = await adapter.gatherMarketObservations(mstrThesis);
+      const mstrPeItem = mstrResult.ledger.items.find(
+        (i) => i.observation.type === 'VALUATION_PE_TTM'
+      );
+      const mstrPeLyrItem = mstrResult.ledger.items.find(
+        (i) => i.observation.type === 'VALUATION_PE_LYR'
+      );
+      const mstrEvItem = mstrResult.ledger.items.find(
+        (i) => i.observation.type === 'VALUATION_EV_EBITDA'
+      );
+
+      expect(mstrPeItem).toBeDefined();
+      expect(mstrPeItem?.value).toBe(-1.9934);
+      expect(mstrPeLyrItem).toBeDefined();
+      expect(mstrPeLyrItem?.value).toBe(-14.75);
+      expect(mstrEvItem).toBeDefined();
+      expect(mstrEvItem?.value).toBe(-12.7712);
+    });
+
+    it('safely handles missing or null ratio fields without failure', async () => {
+      const adapter = new BitgetEquityAdapter({
+        fetch: mockMultiStockFetch(),
+        now: () => NOW,
+      });
+
+      // COIN has pe_lyr: null and div_yield_12m: null
+      const thesis: StructuredThesisV1 = {
+        id: 'th_coin_partial',
+        thesisInputId: 'inp_coin_partial',
+        originalThesis: 'COIN partial ratio test.',
+        market: 'COIN/USD',
+        baseAsset: 'COIN',
+        quoteAsset: 'USD',
+        claim: 'COIN partial test',
+        direction: 'LONG',
+        timeHorizon: { description: '30 days' },
+        catalysts: [],
+        createdAt: NOW.toISOString(),
+        schemaVersion: 1,
+      };
+
+      const result = await adapter.gatherMarketObservations(thesis);
+      expect(result.complete).toBe(true);
+      // pe_lyr should not be present
+      expect(result.ledger.items.some((i) => i.observation.type === 'VALUATION_PE_LYR')).toBe(false);
+      // But pe_ttm, pb, ev_ebitda, ps_ttm should be present
+      expect(result.ledger.items.some((i) => i.observation.type === 'VALUATION_PE_TTM')).toBe(true);
+      expect(result.ledger.items.some((i) => i.observation.type === 'VALUATION_PB_RATIO')).toBe(true);
+      expect(result.ledger.items.some((i) => i.observation.type === 'VALUATION_EV_EBITDA')).toBe(true);
+      expect(result.ledger.items.some((i) => i.observation.type === 'VALUATION_PS_TTM')).toBe(true);
+    });
+
+    it('rejects unsupported equity markets and directions', async () => {
+      const adapter = new BitgetEquityAdapter({
+        fetch: mockMultiStockFetch(),
+        now: () => NOW,
+      });
+
+      // Unsupported equity symbol
+      await expect(
+        adapter.gatherMarketObservations({
+          id: 'th_unsupported_equity',
+          thesisInputId: 'inp_unsupported',
+          originalThesis: 'SPY is going up.',
+          market: 'SPY/USD',
+          baseAsset: 'SPY',
+          quoteAsset: 'USD',
+          claim: 'SPY up',
+          direction: 'LONG',
+          timeHorizon: { description: '30 days' },
+          catalysts: [],
+          createdAt: NOW.toISOString(),
+          schemaVersion: 1,
+        })
+      ).rejects.toMatchObject({
+        code: 'UNSUPPORTED_MARKET',
+      });
+
+      // Relative equity thesis
+      await expect(
+        adapter.gatherMarketObservations({
+          id: 'th_relative_equity',
+          thesisInputId: 'inp_relative',
+          originalThesis: 'NVDA will outperform MSFT.',
+          market: 'NVDA/USD',
+          baseAsset: 'NVDA',
+          quoteAsset: 'USD',
+          claim: 'NVDA relative',
+          direction: 'RELATIVE_LONG' as any,
+          timeHorizon: { description: '30 days' },
+          catalysts: [],
+          createdAt: NOW.toISOString(),
+          schemaVersion: 1,
+        })
+      ).rejects.toMatchObject({
+        code: 'INVALID_INPUT',
+      });
+    });
+
+    it.each(symbols)('verifies crypto adapter rejects %s/USD', async (symbol) => {
+      const cryptoAdapter = new BitgetMarketAdapter();
+      await expect(
+        cryptoAdapter.gatherMarketObservations({
+          id: `th_crypto_${symbol.toLowerCase()}`,
+          thesisInputId: `inp_crypto_${symbol.toLowerCase()}`,
+          originalThesis: `${symbol} test`,
+          market: `${symbol}/USD`,
+          baseAsset: symbol,
+          quoteAsset: 'USD',
+          claim: `${symbol} test`,
+          direction: 'LONG',
+          timeHorizon: { description: '30 days' },
+          catalysts: [],
+          createdAt: NOW.toISOString(),
+          schemaVersion: 1,
+        })
+      ).rejects.toMatchObject({
+        code: 'UNSUPPORTED_MARKET',
+      });
+    });
   });
 });
