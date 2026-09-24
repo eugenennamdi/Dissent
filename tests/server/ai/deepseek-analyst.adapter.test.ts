@@ -1,17 +1,23 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { EvidenceLedgerV1, EvidenceV1 } from '@/core/contracts/evidence';
 import { assertArgumentEvidenceGrounding } from '@/core/domain/invariants';
+import {
+  SUPPORTED_MARKET_NAMES,
+  SUPPORTED_THESIS_DIRECTIONS,
+} from '@/core/domain/supported-markets';
 import { DissentError } from '@/core/errors/domain-errors';
 import {
+  STRESS_EXPECTED_WINDOW_SELECTION,
   STRESS_TRANSMISSION_MECHANISM_MAX_LENGTH,
+  THESIS_EXTRACTION_JSON_SCHEMA,
   StressResearchDraftOutputSchema,
+  ThesisExtractionOutputSchema,
   createStressResearchJsonSchema,
 } from '@/server/ai/ai-output.schemas';
 import { DeepSeekAnalystAdapter } from '@/server/ai/deepseek-analyst.adapter';
 import { DeepSeekResponsesClient } from '@/server/ai/deepseek-responses.client';
-import {
-  assertSafeModelAuthoredText,
-} from '@/server/ai/grounding';
+import { assertSafeModelAuthoredText } from '@/server/ai/grounding';
+import { assertSynthesisUnknownEvidenceConsistency } from '@/server/ai/research-grounding';
 import {
   FIXED_AT,
   QueueModel,
@@ -163,7 +169,42 @@ function derivativesEvidence(type: 'FUNDING_RATE' | 'OPEN_INTEREST'): EvidenceV1
 }
 
 describe('DeepSeekAnalystAdapter', () => {
-    it('structures the canonical thesis, preserves it verbatim, and distinguishes assumptions', async () => {
+  it('keeps provider and application thesis extraction contracts multi-asset consistent', () => {
+    const properties = THESIS_EXTRACTION_JSON_SCHEMA.properties as Record<
+      string,
+      { enum?: Array<string | null> }
+    >;
+    expect(properties.market?.enum).toEqual([...SUPPORTED_MARKET_NAMES, null]);
+    expect(properties.direction?.enum).toEqual([
+      ...SUPPORTED_THESIS_DIRECTIONS,
+      null,
+    ]);
+    expect(
+      (THESIS_EXTRACTION_JSON_SCHEMA.anyOf as Array<{
+        properties: { market?: { enum: string[] } };
+      }>).some((branch) => branch.properties.market?.enum.includes('SOL/BTC'))
+    ).toBe(true);
+    expect(
+      ThesisExtractionOutputSchema.safeParse({
+        ...extractionOutput,
+        market: 'SOL/USDT',
+        baseAsset: 'SOL',
+        quoteAsset: 'USDT',
+        direction: 'LONG',
+      }).success
+    ).toBe(true);
+    expect(
+      ThesisExtractionOutputSchema.safeParse({
+        ...extractionOutput,
+        market: 'SOL/USDT',
+        baseAsset: 'SOL',
+        quoteAsset: 'USDT',
+        direction: 'RELATIVE_LONG',
+      }).success
+    ).toBe(false);
+  });
+
+  it('structures the canonical thesis, preserves it verbatim, and distinguishes assumptions', async () => {
     const model = new QueueModel([extractionOutput]);
     const analyst = new DeepSeekAnalystAdapter({
       model,
@@ -183,6 +224,104 @@ describe('DeepSeekAnalystAdapter', () => {
     expect(model.requests[0]?.maxOutputTokens).toBe(1_800);
     expect(model.requests[0]?.reasoningEffort).toBe('low');
   });
+
+  it.each([
+    {
+      rawText: 'SOL will outperform BTC over the next two days.',
+      market: 'SOL/BTC',
+      baseAsset: 'SOL',
+      quoteAsset: 'BTC',
+      direction: 'RELATIVE_LONG',
+    },
+    {
+      rawText: 'SOL will underperform ETH over the next two days.',
+      market: 'SOL/ETH',
+      baseAsset: 'SOL',
+      quoteAsset: 'ETH',
+      direction: 'RELATIVE_SHORT',
+    },
+    {
+      rawText: 'BTC will outperform SOL over the next two days.',
+      market: 'BTC/SOL',
+      baseAsset: 'BTC',
+      quoteAsset: 'SOL',
+      direction: 'RELATIVE_LONG',
+    },
+  ] as const)(
+    'preserves the ordered $market relative comparison',
+    async ({ rawText, market, baseAsset, quoteAsset, direction }) => {
+      const model = new QueueModel([
+        {
+          ...extractionOutput,
+          market,
+          baseAsset,
+          quoteAsset,
+          direction,
+          claim: rawText,
+        },
+      ]);
+      const input = { ...thesisInput, rawText };
+      const result = await new DeepSeekAnalystAdapter({
+        model,
+        now: () => new Date(FIXED_AT),
+      }).structureThesis(input);
+
+      expect(result.structuredThesis).toMatchObject({
+        market,
+        baseAsset,
+        quoteAsset,
+        direction,
+        originalThesis: rawText,
+      });
+    }
+  );
+
+  it.each([
+    {
+      rawText: 'BTC will strengthen over the next day.',
+      market: 'BTC/USDT',
+      baseAsset: 'BTC',
+      direction: 'LONG',
+    },
+    {
+      rawText: 'SOL will weaken over the next day.',
+      market: 'SOL/USDT',
+      baseAsset: 'SOL',
+      direction: 'SHORT',
+    },
+  ] as const)(
+    'structures the single-asset $direction thesis for $market',
+    async ({ rawText, market, baseAsset, direction }) => {
+      const model = new QueueModel([
+        {
+          ...extractionOutput,
+          market,
+          baseAsset,
+          quoteAsset: 'USDT',
+          direction,
+          claim: rawText,
+          assumptions: [
+            {
+              ...extractionOutput.assumptions[0],
+              claim: `${baseAsset} historical behavior remains relevant`,
+            },
+          ],
+        },
+      ]);
+      const result = await new DeepSeekAnalystAdapter({
+        model,
+        now: () => new Date(FIXED_AT),
+      }).structureThesis({ ...thesisInput, rawText });
+
+      expect(result.structuredThesis).toMatchObject({
+        market,
+        baseAsset,
+        quoteAsset: 'USDT',
+        direction,
+        originalThesis: rawText,
+      });
+    }
+  );
 
   it('retries only a truncated model operation once with its bounded recovery budget', async () => {
     const warning = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
@@ -288,9 +427,57 @@ describe('DeepSeekAnalystAdapter', () => {
     const analyst = new DeepSeekAnalystAdapter({ model });
 
     await expect(
-      analyst.structureThesis({ ...thesisInput, rawText: 'SOL will outperform USDT' })
+      analyst.structureThesis({ ...thesisInput, rawText: 'XRP will outperform DOGE' })
     ).rejects.toMatchObject({ code: 'UNSUPPORTED_MARKET' });
     expect(model.requests).toHaveLength(0);
+  });
+
+  it('rejects inconsistent extracted relative fields', async () => {
+    const model = new QueueModel([
+      {
+        ...extractionOutput,
+        market: 'SOL/BTC',
+        baseAsset: 'BTC',
+        quoteAsset: 'SOL',
+      },
+    ]);
+
+    await expect(
+      new DeepSeekAnalystAdapter({ model }).structureThesis({
+        ...thesisInput,
+        rawText: 'SOL will outperform BTC.',
+      })
+    ).rejects.toMatchObject({ code: 'MODEL_OUTPUT_INVALID' });
+    expect(model.requests).toHaveLength(1);
+  });
+
+  it.each([
+    {
+      rawText: 'SOL will rise.',
+      output: {
+        market: 'SOL/USDT',
+        baseAsset: 'SOL',
+        quoteAsset: 'USDT',
+        direction: 'RELATIVE_LONG',
+      },
+    },
+    {
+      rawText: 'ETH will outperform ETH.',
+      output: {
+        market: 'ETH/ETH',
+        baseAsset: 'ETH',
+        quoteAsset: 'ETH',
+        direction: 'RELATIVE_LONG',
+      },
+    },
+  ])('rejects inconsistent or self-comparing extracted fields', async ({ rawText, output }) => {
+    const model = new QueueModel([{ ...extractionOutput, ...output }]);
+    await expect(
+      new DeepSeekAnalystAdapter({ model }).structureThesis({
+        ...thesisInput,
+        rawText,
+      })
+    ).rejects.toMatchObject({ code: 'MODEL_OUTPUT_INVALID' });
   });
 
   it('rejects a model classification outside the canonical market', async () => {
@@ -495,6 +682,13 @@ describe('DeepSeekAnalystAdapter', () => {
     expect(stressed.invalidationConditions.every((item) => item.urgency === 'THESIS_REVIEW')).toBe(
       true
     );
+    expect(
+      stressed.invalidationConditions.every(
+        (item) =>
+          item.type === 'QUALITATIVE' &&
+          item.expectedWindow === 'Within the stated thesis horizon of 48 hours'
+      )
+    ).toBe(true);
     expect(brief.originalThesis).toBe(thesisInput.rawText);
     expect(brief.supportingEvidence[0]).toEqual(ledger.items[0]);
     expect(brief.theDissent).toEqual(dissentCase);
@@ -566,7 +760,12 @@ describe('DeepSeekAnalystAdapter', () => {
           maxItems: number;
           items: { required: string[] };
         };
-        invalidationConditions: { items: { required: string[] } };
+        invalidationConditions: {
+          items: {
+            required: string[];
+            properties: { expectedWindow: { enum: string[] } };
+          };
+        };
       };
     };
     expect(providerSchema.properties.scenarios).toMatchObject({ minItems: 2, maxItems: 2 });
@@ -590,7 +789,13 @@ describe('DeepSeekAnalystAdapter', () => {
       'verificationSourceKind',
       'expectedWindow',
     ]);
+    expect(
+      providerSchema.properties.invalidationConditions.items.properties.expectedWindow.enum
+    ).toEqual([STRESS_EXPECTED_WINDOW_SELECTION]);
     expect(providerSchema.properties).not.toHaveProperty('assumptionAssessments');
+    expect(model.requests[1]?.systemPrompt).toContain(
+      'Set expectedWindow to the exact server-issued value THESIS_HORIZON'
+    );
   });
 
   it('regenerates the stress stage once when required nested fields are omitted', async () => {
@@ -1051,7 +1256,7 @@ describe('DeepSeekAnalystAdapter', () => {
       statement: 'ETH relative strength reverses across aligned market observations',
       observableEvent: 'Bitget evidence shows ETH no longer outperforming BTC over aligned intervals',
       verificationSourceKind: 'BITGET_MARKET_DATA',
-      expectedWindow: 'Within the stated thesis horizon',
+      expectedWindow: STRESS_EXPECTED_WINDOW_SELECTION,
     };
 
     let callCount = 0;
@@ -1568,17 +1773,55 @@ describe('DeepSeekAnalystAdapter', () => {
         index === 0 ? { ...item, statement: 'ETH ratio falls below 0.03' } : item
       ),
     };
+    const model = new QueueModel(splitStressDraft(unsupportedThreshold));
     await expect(
-      new DeepSeekAnalystAdapter({
-        model: new QueueModel(splitStressDraft(unsupportedThreshold)),
-      }).stressTest(
+      new DeepSeekAnalystAdapter({ model }).stressTest(
         makeStructuredThesis(),
         makeAssumptions(),
         makeEvidenceLedger(),
         makeArgument('ADVOCATE'),
         makeArgument('DISSENTER')
       )
-    ).rejects.toMatchObject({ code: 'MODEL_OUTPUT_INVALID' });
+    ).rejects.toMatchObject({
+      code: 'MODEL_OUTPUT_INVALID',
+      details: {
+        validationCategory: 'MODEL_AUTHORED_TEXT_VALIDATION',
+        invariantCode: 'MODEL_AUTHORED_TEXT_MUST_NOT_CONTAIN_NUMERIC_FACTS',
+        issuePath: 'invalidationConditions[0].statement',
+      },
+    });
+    expect(model.requests).toHaveLength(2);
+  });
+
+  it.each([
+    ['unsupported duration', 'Within 72 hours'],
+    ['numerical market claim', 'Until SOL falls below 100 USDT'],
+  ])('rejects %s placed in expectedWindow without recovery', async (_label, expectedWindow) => {
+    const draft = stressResearchDraft();
+    draft.invalidationConditions[0]!.expectedWindow = expectedWindow;
+    const model = new QueueModel([assumptionAssessmentDraft(), draft]);
+
+    await expect(
+      new DeepSeekAnalystAdapter({ model }).stressTest(
+        makeStructuredThesis(),
+        makeAssumptions(),
+        makeEvidenceLedger(),
+        makeArgument('ADVOCATE'),
+        makeArgument('DISSENTER')
+      )
+    ).rejects.toMatchObject({
+      code: 'MODEL_OUTPUT_INVALID',
+      details: {
+        validationCategory: 'APPLICATION_SCHEMA_VALIDATION',
+        issues: [
+          expect.objectContaining({
+            code: 'invalid_literal',
+            path: 'invalidationConditions.0.expectedWindow',
+          }),
+        ],
+      },
+    });
+    expect(model.requests).toHaveLength(2);
   });
 
   it('distinguishes descriptive market language from trading instructions', () => {
@@ -1772,6 +2015,144 @@ describe('DeepSeekAnalystAdapter', () => {
         evidenceLedger: makeEvidenceLedger(),
       })
     ).rejects.toMatchObject({ code: 'MODEL_OUTPUT_INVALID' });
+  });
+
+  it('rejects a synthesis unknown that claims available derivatives observations are absent', async () => {
+    const thesis = makeStructuredThesis();
+    const assumptions = makeAssumptions();
+    const advocateCase = makeArgument('ADVOCATE');
+    const dissentCase = makeArgument('DISSENTER');
+    const ledger = ledgerWithEvidence(
+      derivativesEvidence('FUNDING_RATE'),
+      derivativesEvidence('OPEN_INTEREST')
+    );
+    const inconsistentDraft = {
+      ...synthesisDraft({
+        dissentPointId: dissentCase.points[0]?.id,
+        evidenceId: dissentCase.points[0]?.evidenceIds[0],
+        targetId: thesis.id,
+      }),
+      unknowns: [
+        'Whether funding-rate and open-interest snapshots establish positioning is unresolved because those readings are absent',
+      ],
+    };
+    const model = new QueueModel([...stressOutputs(), inconsistentDraft]);
+    const analyst = new DeepSeekAnalystAdapter({
+      model,
+      now: () => new Date(FIXED_AT),
+    });
+    const stressed = await analyst.stressTest(
+      thesis,
+      assumptions,
+      ledger,
+      advocateCase,
+      dissentCase
+    );
+
+    await expect(
+      analyst.synthesizeBrief({
+        runId: 'run_ai_1',
+        originalThesis: thesisInput,
+        structuredThesis: thesis,
+        advocateCase,
+        dissentCase,
+        assumptions: stressed.testedAssumptions,
+        stressScenarios: stressed.stressScenarios,
+        invalidationConditions: stressed.invalidationConditions,
+        evidenceLedger: ledger,
+      })
+    ).rejects.toMatchObject({
+      code: 'MODEL_OUTPUT_INVALID',
+      details: {
+        validationCategory: 'SYNTHESIS_EVIDENCE_COVERAGE_VALIDATION',
+        invariantCode:
+          'SYNTHESIS_UNKNOWN_MUST_NOT_CLAIM_PRESENT_OBSERVATION_IS_ABSENT',
+        issuePath: 'unknowns[0]',
+        observationType: 'FUNDING_RATE',
+      },
+    });
+
+    expect(model.requests[2]?.userPayload.evidenceCoverage).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          observationType: 'FUNDING_RATE',
+          present: true,
+          observationCount: 1,
+          repeatedObservationMarkets: [],
+        }),
+        expect.objectContaining({
+          observationType: 'OPEN_INTEREST',
+          present: true,
+          observationCount: 1,
+          repeatedObservationMarkets: [],
+        }),
+      ])
+    );
+  });
+
+  it('distinguishes absent observations from unavailable repeated observations', () => {
+    const fundingOnly = ledgerWithEvidence(derivativesEvidence('FUNDING_RATE'));
+    const openInterestOnly = ledgerWithEvidence(derivativesEvidence('OPEN_INTEREST'));
+    const singleSnapshots = ledgerWithEvidence(
+      derivativesEvidence('FUNDING_RATE'),
+      derivativesEvidence('OPEN_INTEREST')
+    );
+
+    expect(() =>
+      assertSynthesisUnknownEvidenceConsistency(
+        ['Open-interest observations are unavailable'],
+        fundingOnly
+      )
+    ).not.toThrow();
+    expect(() =>
+      assertSynthesisUnknownEvidenceConsistency(
+        ['Funding-rate observations are absent'],
+        openInterestOnly
+      )
+    ).not.toThrow();
+    expect(() =>
+      assertSynthesisUnknownEvidenceConsistency(
+        ['Repeated funding-rate and open-interest observations are unavailable'],
+        singleSnapshots
+      )
+    ).not.toThrow();
+    expect(() =>
+      assertSynthesisUnknownEvidenceConsistency(
+        [
+          'Available funding-rate and open-interest snapshots do not independently establish directional positioning, institutional participation, or crowding',
+        ],
+        singleSnapshots
+      )
+    ).not.toThrow();
+    expect(() =>
+      assertSynthesisUnknownEvidenceConsistency(
+        ['There is no evidence that funding-rate snapshots establish crowding'],
+        singleSnapshots
+      )
+    ).not.toThrow();
+
+    const repeatedFunding = ledgerWithEvidence(
+      derivativesEvidence('FUNDING_RATE'),
+      {
+        ...derivativesEvidence('FUNDING_RATE'),
+        id: 'ev_funding_repeat',
+        provenance: {
+          ...derivativesEvidence('FUNDING_RATE').provenance,
+          observedAt: '2026-09-19T11:59:00.000Z',
+        },
+      }
+    );
+    expect(() =>
+      assertSynthesisUnknownEvidenceConsistency(
+        ['Repeated funding-rate observations are unavailable'],
+        repeatedFunding
+      )
+    ).toThrowError(
+      expect.objectContaining({
+        code: 'MODEL_OUTPUT_INVALID',
+        details: expect.objectContaining({ observationType: 'FUNDING_RATE' }),
+      })
+    );
   });
 
 });

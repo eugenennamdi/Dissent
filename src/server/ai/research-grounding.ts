@@ -24,11 +24,112 @@ import {
   assertSafeModelAuthoredText,
   deriveResearchLimitations,
   deterministicId,
+  evidenceObservationCoverage,
 } from './grounding';
 
 type AssumptionAssessmentDraft = z.infer<typeof AssumptionAssessmentDraftOutputSchema>;
 type StressResearchDraft = z.infer<typeof StressResearchDraftOutputSchema>;
 type SynthesisDraft = z.infer<typeof SynthesisDraftOutputSchema>;
+
+const SYNTHESIS_COVERAGE_RULES = [
+  {
+    observationType: 'FUNDING_RATE' as const,
+    subjectPattern: /\bfunding(?:[- ]rate)?\b/i,
+  },
+  {
+    observationType: 'OPEN_INTEREST' as const,
+    subjectPattern: /\bopen[- ]interest\b/i,
+  },
+] as const;
+
+const DIRECT_ABSENCE_PREFIX_PATTERN =
+  /(?:\b(?:no|missing|absent|unavailable)\s+(?:(?:current|recent|available|relevant)\s+)?|\b(?:absence|lack)\s+of\s+)$/i;
+const DIRECT_ABSENCE_SUFFIX_PATTERN =
+  /^\s*(?:data|evidence|observations?|readings?|snapshots?|measurements?)?\s*(?:is|are|was|were|remains?|remain)\s+(?:not\s+(?:available|present)|missing|absent|unavailable)\b/i;
+const REFERENTIAL_ABSENCE_PATTERN =
+  /\b(?:those|these|the|such)\s+(?:readings|observations|snapshots|data|measurements|evidence)\s+(?:is|are|was|were|remains?|remain)\s+(?:not\s+(?:available|present)|missing|absent|unavailable)\b/i;
+const COORDINATED_MEASUREMENT_ABSENCE_PATTERN =
+  /\b(?:readings|observations|snapshots|data|measurements|evidence)\s+(?:is|are|was|were|remains?|remain)\s+(?:not\s+(?:available|present)|missing|absent|unavailable)\b/i;
+const REPEATED_OBSERVATION_PATTERN =
+  /\b(?:repeated|multiple|consecutive|serial|longitudinal|time[- ]series|series|over time)\b/i;
+
+function claimsObservationAbsence(
+  text: string,
+  subjectPattern: RegExp
+): { claimsAbsence: boolean; repeatedOnly: boolean } {
+  const clauses = text.split(/(?:[.;!?]|\bbut\b|\bhowever\b)/i);
+  for (const clause of clauses) {
+    const subjectMatch = subjectPattern.exec(clause);
+    if (!subjectMatch || subjectMatch.index === undefined) continue;
+    const beforeSubject = clause.slice(Math.max(0, subjectMatch.index - 80), subjectMatch.index);
+    const afterSubject = clause.slice(subjectMatch.index + subjectMatch[0].length);
+    const directAbsence =
+      DIRECT_ABSENCE_PREFIX_PATTERN.test(beforeSubject) ||
+      DIRECT_ABSENCE_SUFFIX_PATTERN.test(afterSubject) ||
+      REFERENTIAL_ABSENCE_PATTERN.test(afterSubject) ||
+      (SYNTHESIS_COVERAGE_RULES.every((rule) => rule.subjectPattern.test(clause)) &&
+        COORDINATED_MEASUREMENT_ABSENCE_PATTERN.test(clause));
+    if (directAbsence) {
+      return {
+        claimsAbsence: true,
+        repeatedOnly: REPEATED_OBSERVATION_PATTERN.test(clause),
+      };
+    }
+  }
+  return { claimsAbsence: false, repeatedOnly: false };
+}
+
+export function assertSynthesisUnknownEvidenceConsistency(
+  unknowns: string[],
+  ledger: EvidenceLedgerV1
+): void {
+  const coverageByType = new Map(
+    evidenceObservationCoverage(ledger).map((coverage) => [
+      coverage.observationType,
+      coverage,
+    ])
+  );
+
+  unknowns.forEach((unknown, index) => {
+    for (const rule of SYNTHESIS_COVERAGE_RULES) {
+      const claim = claimsObservationAbsence(unknown, rule.subjectPattern);
+      if (!claim.claimsAbsence) continue;
+      const coverage = coverageByType.get(rule.observationType);
+      const contradictedByLedger = claim.repeatedOnly
+        ? (coverage?.repeatedObservationMarkets.length ?? 0) > 0
+        : coverage?.present === true;
+      if (!contradictedByLedger) continue;
+
+      const issuePath = `unknowns[${index}]`;
+      throw DissentError.modelOutputInvalid(
+        'synthesizeBrief',
+        'A synthesized research gap contradicted the evidence ledger coverage.',
+        {
+          validationCategory: 'SYNTHESIS_EVIDENCE_COVERAGE_VALIDATION',
+          invariantCode:
+            'SYNTHESIS_UNKNOWN_MUST_NOT_CLAIM_PRESENT_OBSERVATION_IS_ABSENT',
+          issuePath,
+          issues: [
+            {
+              code: 'SYNTHESIS_UNKNOWN_MUST_NOT_CLAIM_PRESENT_OBSERVATION_IS_ABSENT',
+              path: issuePath,
+            },
+          ],
+          observationType: rule.observationType,
+          safeExplanation:
+            'A synthesized unknown claimed that an observation was unavailable even though matching ledger coverage exists.',
+        }
+      );
+    }
+  });
+}
+
+export function deriveStressExpectedWindow(thesis: StructuredThesisV1): string {
+  const estimatedHours = thesis.timeHorizon.estimatedHours;
+  if (estimatedHours === undefined) return 'Within the stated thesis horizon';
+  const unit = estimatedHours === 1 ? 'hour' : 'hours';
+  return `Within the stated thesis horizon of ${estimatedHours} ${unit}`;
+}
 
 interface StressDiagnosticInput {
   invariantCode: string;
@@ -380,7 +481,6 @@ export function materializeStressResearch(input: {
     ...input.draft.invalidationConditions.flatMap((item, index) => [
       { field: `invalidationConditions[${index}].statement`, value: item.statement },
       { field: `invalidationConditions[${index}].observableEvent`, value: item.observableEvent },
-      { field: `invalidationConditions[${index}].expectedWindow`, value: item.expectedWindow },
     ]),
   ]);
 
@@ -512,7 +612,7 @@ export function materializeStressResearch(input: {
           condition.verificationSourceKind === 'BITGET_MARKET_DATA'
             ? 'Bitget observations represented in the Dissent evidence ledger'
             : 'A future primary source must be added to the Dissent evidence ledger before verification',
-        expectedWindow: condition.expectedWindow,
+        expectedWindow: deriveStressExpectedWindow(input.thesis),
         urgency: 'THESIS_REVIEW',
         schemaVersion: 1,
       },
@@ -555,6 +655,7 @@ export function materializeDissentBrief(input: {
       value,
     })),
   ]);
+  assertSynthesisUnknownEvidenceConsistency(input.draft.unknowns, params.evidenceLedger);
 
   const contradictions = input.draft.dissentPointClassifications.flatMap(
     (classification, index) => {

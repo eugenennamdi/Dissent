@@ -3,6 +3,7 @@ import { ArgumentV1Schema, type ArgumentStanceV1, type ArgumentV1 } from '@/core
 import type { AssumptionCategoryV1, AssumptionV1 } from '@/core/contracts/assumption';
 import {
   deriveEvidenceFreshness,
+  EvidenceObservationTypeV1Schema,
   type EvidenceLedgerV1,
   type EvidenceNatureV1,
   type EvidenceObservationTypeV1,
@@ -59,9 +60,9 @@ function argumentViolation(input: ArgumentViolationInput): DissentError {
 
 const NUMERIC_FACT_PATTERN = /(?:[$€£¥]|\b\d+(?:[.,]\d+)?\b|%)/;
 const PROHIBITED_TRADING_LANGUAGE_PATTERNS: readonly RegExp[] = [
-  // Direct imperatives aimed at taking or closing an ETH/BTC position. Requiring
+  // Direct imperatives aimed at taking or closing a supported-asset position. Requiring
   // a trading object keeps descriptive nouns such as "sell-off" and "buy-side" valid.
-  /^\s*(?:please\s+)?(?:buy|sell)\s+(?:(?:your|the|this)\s+(?:position|asset)|ETH|BTC)\b/i,
+  /^\s*(?:please\s+)?(?:buy|sell)\s+(?:(?:your|the|this)\s+(?:position|asset)|ETH|BTC|SOL)\b/i,
   /^\s*(?:please\s+)?(?:exit|close|open|enter)\s+(?:(?:your|the|this)\s+)?position\b/i,
   // Advice directed at the reader remains prohibited even when it is phrased politely.
   /\b(?:you|the user|the trader|the investor)\s+(?:should|must|need(?:s)?\s+to|ought\s+to|(?:are|is)\s+advised\s+to)\s+(?:buy|sell|exit|close|open|enter)\b/i,
@@ -105,7 +106,7 @@ const SEMANTIC_EVIDENCE_RULES: ReadonlyArray<{
   {
     label: 'directional-positioning',
     pattern:
-      /\b(?:directional (?:positioning|exposure)|traders? (?:are|is) net (?:long|short)(?:\s+(?:ETH|BTC))?)\b/i,
+      /\b(?:directional (?:positioning|exposure)|traders? (?:are|is) net (?:long|short)(?:\s+(?:ETH|BTC|SOL))?)\b/i,
     absencePattern:
       /(?:\b(?:no|missing|absent|unavailable)\b[^.]{0,50}\bdirectional positioning\b|\bdirectional positioning(?: data| evidence| observations?| coverage)?\b[^.]{0,30}\b(?:missing|absent|unavailable)\b)/i,
     allowedTypes: new Set<EvidenceObservationTypeV1>(),
@@ -187,7 +188,7 @@ const EVIDENCE_CAPABILITIES: Record<
   },
   PRICE_CHANGE_24H: {
     supports: ['Historical price change for one market over its stated window'],
-    limitations: ['Does not independently establish ETH/BTC relative performance or a future outcome'],
+    limitations: ['Does not independently establish cross-asset relative performance or a future outcome'],
   },
   BASE_VOLUME_24H: {
     supports: ['Historical base-asset trading volume for one market'],
@@ -203,14 +204,14 @@ const EVIDENCE_CAPABILITIES: Record<
   },
   INTERVAL_PRICE_CHANGE: {
     supports: ['Historical price change for one market over the stated interval'],
-    limitations: ['Does not independently establish ETH/BTC relative performance or a future outcome'],
+    limitations: ['Does not independently establish cross-asset relative performance or a future outcome'],
   },
   RETURN_SPREAD: {
-    supports: ['Aligned historical return difference between ETH and BTC'],
+    supports: ['Aligned historical return difference between two researched assets'],
     limitations: ['Does not establish funding, open interest, sentiment, or a future outcome'],
   },
   RELATIVE_RETURN: {
-    supports: ['Aligned historical ETH/BTC relative performance'],
+    supports: ['Aligned historical relative performance between two researched assets'],
     limitations: ['Does not establish funding, open interest, sentiment, or persistence into the future'],
   },
   FUNDING_RATE: {
@@ -367,6 +368,49 @@ export function evidenceCatalog(ledger: EvidenceLedgerV1): AuthorizedFactualClai
   });
 }
 
+export interface EvidenceObservationCoverage {
+  observationType: EvidenceObservationTypeV1;
+  present: boolean;
+  observationCount: number;
+  markets: string[];
+  repeatedObservationMarkets: string[];
+}
+
+/**
+ * Server-owned coverage facts for model-facing research-gap analysis. A type can
+ * be present while still lacking repeated observations for every individual
+ * market; these are deliberately separate facts.
+ */
+export function evidenceObservationCoverage(
+  ledger: EvidenceLedgerV1
+): EvidenceObservationCoverage[] {
+  return EvidenceObservationTypeV1Schema.options.map((observationType) => {
+    const matchingItems = ledger.items.filter(
+      (item) => item.observation.type === observationType
+    );
+    const observationInstancesByMarket = new Map<string, Set<string>>();
+    for (const item of matchingItems) {
+      const observationInstance = item.observation.periodStartAt
+        ? `${item.observation.periodStartAt}/${item.observation.periodEndAt}`
+        : item.provenance.observedAt;
+      const marketInstances =
+        observationInstancesByMarket.get(item.observation.market) ?? new Set<string>();
+      marketInstances.add(observationInstance);
+      observationInstancesByMarket.set(item.observation.market, marketInstances);
+    }
+    return {
+      observationType,
+      present: matchingItems.length > 0,
+      observationCount: matchingItems.length,
+      markets: [...observationInstancesByMarket.keys()].sort(),
+      repeatedObservationMarkets: [...observationInstancesByMarket.entries()]
+        .filter(([, instances]) => instances.size > 1)
+        .map(([market]) => market)
+        .sort(),
+    };
+  });
+}
+
 export function authorizedResearchLimitationCatalog(
   ledger: EvidenceLedgerV1
 ): AuthorizedResearchLimitation[] {
@@ -437,7 +481,7 @@ export function authorizedResearchLimitationCatalog(
     addLimitation(
       'INFERENCE_NOT_ESTABLISHED',
       'FORWARD_PERSISTENCE',
-      'Historical observations do not establish that the observed relationship will persist into the thesis horizon.',
+      'Historical observations do not establish that the observed behavior or relationship will persist into the thesis horizon.',
       historicalClaimIds
     );
   }
@@ -469,6 +513,7 @@ export type ArgumentInterpretationKind =
   | 'RELATIVE_RETURN_OBSERVATION'
   | 'RETURN_SPREAD_OBSERVATION'
   | 'SINGLE_MARKET_PRICE_CONTEXT'
+  | 'SINGLE_ASSET_HISTORICAL_PRICE_OBSERVATION'
   | 'FUNDING_RATE_CONTEXT'
   | 'OPEN_INTEREST_CONTEXT'
   | 'VOLUME_CONTEXT'
@@ -537,32 +582,41 @@ function selectBoundAssumption(
 }
 
 function observationInterpretation(
-  observationType: EvidenceObservationTypeV1
+  observationType: EvidenceObservationTypeV1,
+  thesis: StructuredThesisV1
 ): Pick<AuthorizedArgumentPointOption, 'interpretationKind' | 'title'> & {
   measurementText: string;
 } {
+  const relative = thesis.direction === 'RELATIVE_LONG' || thesis.direction === 'RELATIVE_SHORT';
+  const comparison = thesis.market;
   switch (observationType) {
     case 'RELATIVE_RETURN':
       return {
         interpretationKind: 'RELATIVE_RETURN_OBSERVATION',
-        title: 'Observed ETH/BTC relative return',
+        title: `Observed ${comparison} relative return`,
         measurementText:
-          'The aligned historical ETH/BTC relative return measures relative performance directly while remaining historical evidence.',
+          `The aligned historical ${comparison} relative return measures relative performance directly while remaining historical evidence.`,
       };
     case 'RETURN_SPREAD':
       return {
         interpretationKind: 'RETURN_SPREAD_OBSERVATION',
-        title: 'Observed ETH and BTC return spread',
+        title: `Observed ${thesis.baseAsset} and ${thesis.quoteAsset} return spread`,
         measurementText:
-          'The aligned historical return spread measures the difference between ETH and BTC returns in percentage points, not the percentage change of the ETH/BTC ratio.',
+          `The aligned historical return spread measures the difference between ${thesis.baseAsset} and ${thesis.quoteAsset} returns in percentage points, not the percentage change of the ${comparison} ratio.`,
       };
     case 'PRICE_CHANGE_24H':
     case 'INTERVAL_PRICE_CHANGE':
       return {
-        interpretationKind: 'SINGLE_MARKET_PRICE_CONTEXT',
-        title: 'Single-market historical price context',
+        interpretationKind: relative
+          ? 'SINGLE_MARKET_PRICE_CONTEXT'
+          : 'SINGLE_ASSET_HISTORICAL_PRICE_OBSERVATION',
+        title: relative
+          ? 'Single-market historical price context'
+          : `Observed ${thesis.baseAsset} historical price behavior`,
         measurementText:
-          'The single-market historical price change provides context but does not establish ETH/BTC relative performance or a future outcome.',
+          relative
+            ? `The single-market historical price change provides context but does not establish ${comparison} relative performance or a future outcome.`
+            : `The historical ${thesis.baseAsset} price change measures past behavior but does not establish future direction or persistence.`,
       };
     case 'FUNDING_RATE':
       return {
@@ -682,7 +736,18 @@ export function authorizedArgumentPointCatalog(input: {
   if (input.assumptions.length === 0) {
     throw DissentError.invalidInput('Argument option construction requires assumptions.');
   }
-  const factualClaims = evidenceCatalog(input.ledger);
+  const relativeThesis =
+    input.thesis.direction === 'RELATIVE_LONG' ||
+    input.thesis.direction === 'RELATIVE_SHORT';
+  const factualClaims = evidenceCatalog(input.ledger).filter(
+    (claim) =>
+      relativeThesis ||
+      (claim.observationType !== 'RELATIVE_RETURN' &&
+        claim.observationType !== 'RETURN_SPREAD')
+  );
+  const authorizedFactualClaimIds = new Set(
+    factualClaims.map((claim) => claim.claimId)
+  );
   const evidenceById = new Map(input.ledger.items.map((item) => [item.id, item]));
   const options = factualClaims.map((claim) => {
     const evidence = evidenceById.get(claim.evidenceId);
@@ -691,10 +756,13 @@ export function authorizedArgumentPointCatalog(input: {
         `Authorized claim ${claim.claimId} has no matching ledger evidence.`
       );
     }
-    const semantics = observationInterpretation(claim.observationType);
+    const semantics = observationInterpretation(claim.observationType, input.thesis);
     const supportsRelativeThesis =
-      claim.observationType === 'RELATIVE_RETURN' ||
-      claim.observationType === 'RETURN_SPREAD';
+      relativeThesis
+        ? claim.observationType === 'RELATIVE_RETURN' ||
+          claim.observationType === 'RETURN_SPREAD'
+        : claim.observationType === 'PRICE_CHANGE_24H' ||
+          claim.observationType === 'INTERVAL_PRICE_CHANGE';
     const relation = optionRelation(input.stance, evidence.stance, supportsRelativeThesis);
     const targetAssumption = selectBoundAssumption(
       input.assumptions,
@@ -718,8 +786,10 @@ export function authorizedArgumentPointCatalog(input: {
 
   if (input.stance === 'DISSENTER') {
     for (const limitation of authorizedResearchLimitationCatalog(input.ledger)) {
-      if (limitation.relatedEvidenceClaimIds.length === 0) continue;
-      const relatedEvidenceClaimIds = limitation.relatedEvidenceClaimIds.slice(0, 4);
+      const relatedEvidenceClaimIds = limitation.relatedEvidenceClaimIds
+        .filter((claimId) => authorizedFactualClaimIds.has(claimId))
+        .slice(0, 4);
+      if (relatedEvidenceClaimIds.length === 0) continue;
       const targetAssumption = selectBoundAssumption(
         input.assumptions,
         LIMITATION_ASSUMPTION_PREFERENCES[limitation.dimension] ?? ['OTHER']
@@ -1093,6 +1163,8 @@ function interpretationKindLabel(kind: ArgumentInterpretationKind): string {
       return 'aligned return-spread evidence';
     case 'SINGLE_MARKET_PRICE_CONTEXT':
       return 'single-market price context';
+    case 'SINGLE_ASSET_HISTORICAL_PRICE_OBSERVATION':
+      return 'single-asset historical price evidence';
     case 'FUNDING_RATE_CONTEXT':
       return 'funding-rate context';
     case 'OPEN_INTEREST_CONTEXT':

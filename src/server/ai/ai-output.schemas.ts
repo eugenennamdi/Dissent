@@ -1,4 +1,12 @@
 import { z } from 'zod';
+import {
+  SUPPORTED_BASE_ASSETS,
+  SUPPORTED_MARKET_NAMES,
+  SUPPORTED_QUOTE_ASSETS,
+  SUPPORTED_THESIS_DIRECTIONS,
+  SUPPORTED_THESIS_MARKETS,
+  resolveSupportedThesisMarket,
+} from '@/core/domain/supported-markets';
 
 const NullableTimeHorizonSchema = z
   .object({
@@ -27,24 +35,63 @@ const ExtractedAssumptionSchema = z
   })
   .strict();
 
+const SupportedMarketNameSchema = z.string().refine(
+  (market) => SUPPORTED_MARKET_NAMES.includes(market),
+  'Market is not supported for research.'
+);
+
 export const ThesisExtractionOutputSchema = z
   .object({
     supported: z.boolean(),
     unsupportedReason: z.string().max(300).nullable(),
-    market: z.literal('ETH/BTC').nullable(),
-    baseAsset: z.literal('ETH').nullable(),
-    quoteAsset: z.literal('BTC').nullable(),
+    market: SupportedMarketNameSchema.nullable(),
+    baseAsset: z.enum(SUPPORTED_BASE_ASSETS).nullable(),
+    quoteAsset: z.enum(SUPPORTED_QUOTE_ASSETS).nullable(),
     claim: z.string().min(1).max(300).nullable(),
-    direction: z.enum(['RELATIVE_LONG', 'RELATIVE_SHORT']).nullable(),
+    direction: z.enum(SUPPORTED_THESIS_DIRECTIONS).nullable(),
     timeHorizon: NullableTimeHorizonSchema,
     catalysts: z.array(z.string().min(1).max(200)).max(5),
     assumptions: z.array(ExtractedAssumptionSchema).max(6),
   })
-  .strict();
+  .strict()
+  .superRefine((extracted, context) => {
+    if (!extracted.supported) return;
+    if (
+      extracted.market === null ||
+      extracted.baseAsset === null ||
+      extracted.quoteAsset === null ||
+      extracted.direction === null ||
+      !resolveSupportedThesisMarket({
+        market: extracted.market,
+        baseAsset: extracted.baseAsset,
+        quoteAsset: extracted.quoteAsset,
+        direction: extracted.direction,
+      })
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['market'],
+        message:
+          'Supported extraction fields must form one authoritative market and direction combination.',
+      });
+    }
+  });
 
 export const THESIS_EXTRACTION_JSON_SCHEMA: Record<string, unknown> = {
   type: 'object',
   additionalProperties: false,
+  anyOf: [
+    { properties: { supported: { enum: [false] } } },
+    ...SUPPORTED_THESIS_MARKETS.map((definition) => ({
+      properties: {
+        supported: { enum: [true] },
+        market: { enum: [definition.market] },
+        baseAsset: { enum: [definition.baseAsset] },
+        quoteAsset: { enum: [definition.quoteAsset] },
+        direction: { enum: [...definition.directions] },
+      },
+    })),
+  ],
   required: [
     'supported',
     'unsupportedReason',
@@ -60,13 +107,13 @@ export const THESIS_EXTRACTION_JSON_SCHEMA: Record<string, unknown> = {
   properties: {
     supported: { type: 'boolean' },
     unsupportedReason: { type: ['string', 'null'], maxLength: 300 },
-    market: { type: ['string', 'null'], enum: ['ETH/BTC', null] },
-    baseAsset: { type: ['string', 'null'], enum: ['ETH', null] },
-    quoteAsset: { type: ['string', 'null'], enum: ['BTC', null] },
+    market: { type: ['string', 'null'], enum: [...SUPPORTED_MARKET_NAMES, null] },
+    baseAsset: { type: ['string', 'null'], enum: [...SUPPORTED_BASE_ASSETS, null] },
+    quoteAsset: { type: ['string', 'null'], enum: [...SUPPORTED_QUOTE_ASSETS, null] },
     claim: { type: ['string', 'null'], maxLength: 300 },
     direction: {
       type: ['string', 'null'],
-      enum: ['RELATIVE_LONG', 'RELATIVE_SHORT', null],
+      enum: [...SUPPORTED_THESIS_DIRECTIONS, null],
     },
     timeHorizon: {
       anyOf: [
@@ -469,6 +516,7 @@ export const AssumptionAssessmentDraftOutputSchema = z
   .strict();
 
 export const STRESS_TRANSMISSION_MECHANISM_MAX_LENGTH = 400;
+export const STRESS_EXPECTED_WINDOW_SELECTION = 'THESIS_HORIZON' as const;
 
 export const StressResearchDraftOutputSchema = z
   .object({
@@ -515,7 +563,7 @@ export const StressResearchDraftOutputSchema = z
               'BITGET_MARKET_DATA',
               'FUTURE_PRIMARY_SOURCE_REQUIRED',
             ]),
-            expectedWindow: z.string().min(1).max(160),
+            expectedWindow: z.literal(STRESS_EXPECTED_WINDOW_SELECTION),
           })
           .strict()
       )
@@ -668,7 +716,10 @@ export function createStressResearchJsonSchema(input: {
               type: 'string',
               enum: ['BITGET_MARKET_DATA', 'FUTURE_PRIMARY_SOURCE_REQUIRED'],
             },
-            expectedWindow: nonNumericString(160),
+            expectedWindow: {
+              type: 'string',
+              enum: [STRESS_EXPECTED_WINDOW_SELECTION],
+            },
           },
         },
       },

@@ -7,6 +7,11 @@ import {
   type MarketInstrumentTypeV1,
 } from '@/core/contracts/evidence';
 import { DissentError } from '@/core/errors/domain-errors';
+import {
+  RESEARCH_QUOTE_ASSET,
+  SUPPORTED_RESEARCH_ASSETS,
+  resolveSupportedThesisMarket,
+} from '@/core/domain/supported-markets';
 import type {
   MarketDeskPort,
   MarketObservationQuery,
@@ -42,8 +47,6 @@ const HOUR_MS = 60 * 60 * 1000;
 const TICKER_FRESHNESS_SECONDS = 60;
 const DERIVED_FRESHNESS_SECONDS = 2 * 60 * 60;
 const MAX_FUTURE_SKEW_MS = 5 * 60 * 1000;
-const SUPPORTED_ASSETS = new Set(['BTC', 'ETH']);
-
 interface ResearchMarket {
   baseAsset: string;
   quoteAsset: 'USDT';
@@ -108,11 +111,25 @@ export class BitgetMarketAdapter implements MarketDeskPort {
     const includeFutures = query.includeFutures ?? true;
     const markets = this.resolveResearchMarkets(thesis);
     const candlePeriodEndMs = Math.floor(this.now().getTime() / HOUR_MS) * HOUR_MS;
+    const gaps: MarketResearchGap[] = [];
+    const futuresMarkets = new Set<string>();
 
     await Promise.all(markets.map((market) => this.validateSpotInstrument(market)));
+    if (includeFutures) {
+      await Promise.all(
+        markets.map((market) =>
+          this.captureDimension(
+            market,
+            'INSTRUMENT_VALIDATION',
+            () => this.validateFuturesInstrument(market),
+            () => futuresMarkets.add(market.market),
+            gaps
+          )
+        )
+      );
+    }
 
     const items: EvidenceV1[] = [];
-    const gaps: MarketResearchGap[] = [];
     const intervalResults = new Map<string, IntervalResult>();
 
     await Promise.all(
@@ -143,7 +160,7 @@ export class BitgetMarketAdapter implements MarketDeskPort {
           ),
         ];
 
-        if (includeFutures) {
+        if (includeFutures && futuresMarkets.has(market.market)) {
           tasks.push(
             this.captureDimension(
               market,
@@ -241,15 +258,33 @@ export class BitgetMarketAdapter implements MarketDeskPort {
         'Structured thesis market must match its baseAsset and quoteAsset fields'
       );
     }
-    if (!SUPPORTED_ASSETS.has(baseAsset)) {
+    if (!SUPPORTED_RESEARCH_ASSETS.some((asset) => asset === baseAsset)) {
       throw DissentError.unsupportedMarket(rawMarket, { unsupportedAsset: baseAsset });
     }
 
-    if (quoteAsset === 'USDT') {
-      return [this.toUsdtMarket(baseAsset)];
+    const definition = resolveSupportedThesisMarket({
+      market: rawMarket,
+      baseAsset,
+      quoteAsset,
+      direction: thesis.direction,
+    });
+    if (!definition) {
+      if (
+        quoteAsset !== RESEARCH_QUOTE_ASSET &&
+        !SUPPORTED_RESEARCH_ASSETS.some((asset) => asset === quoteAsset)
+      ) {
+        throw DissentError.unsupportedMarket(rawMarket, { unsupportedAsset: quoteAsset });
+      }
+      if (baseAsset === quoteAsset) {
+        throw DissentError.unsupportedMarket(rawMarket, { reason: 'Self-comparison is unsupported' });
+      }
+      throw DissentError.invalidInput(
+        'Structured thesis direction is inconsistent with its market type'
+      );
     }
-    if (!SUPPORTED_ASSETS.has(quoteAsset) || baseAsset === quoteAsset) {
-      throw DissentError.unsupportedMarket(rawMarket, { unsupportedAsset: quoteAsset });
+
+    if (definition.kind === 'SINGLE_ASSET') {
+      return [this.toUsdtMarket(baseAsset)];
     }
 
     return [this.toUsdtMarket(baseAsset), this.toUsdtMarket(quoteAsset)];
@@ -280,6 +315,28 @@ export class BitgetMarketAdapter implements MarketDeskPort {
     );
     if (!instrument || instrument.status !== 'online') {
       throw DissentError.unsupportedMarket(market.market, {
+        symbol: market.symbol,
+        providerStatus: instrument?.status ?? 'missing',
+      });
+    }
+  }
+
+  private async validateFuturesInstrument(market: ResearchMarket): Promise<void> {
+    const result = await this.request(
+      '/api/v3/market/instruments',
+      { category: 'USDT-FUTURES', symbol: market.symbol },
+      BitgetInstrumentsDataSchema,
+      'validateFuturesInstrument'
+    );
+    const instrument = result.data.find(
+      (candidate) =>
+        candidate.symbol === market.symbol &&
+        candidate.category === 'USDT-FUTURES' &&
+        candidate.baseCoin === market.baseAsset &&
+        candidate.quoteCoin === market.quoteAsset
+    );
+    if (!instrument || instrument.status !== 'online') {
+      throw DissentError.evidenceUnavailable(`${market.market} USDT futures instrument`, {
         symbol: market.symbol,
         providerStatus: instrument?.status ?? 'missing',
       });

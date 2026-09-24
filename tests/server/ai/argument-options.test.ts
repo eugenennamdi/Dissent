@@ -125,6 +125,22 @@ function capabilityLedger(): EvidenceLedgerV1 {
   );
 }
 
+function singleAssetThesis(direction: 'LONG' | 'SHORT' = 'LONG') {
+  return {
+    ...makeStructuredThesis(),
+    originalThesis:
+      direction === 'LONG' ? 'SOL will strengthen.' : 'SOL will weaken.',
+    market: 'SOL/USDT',
+    baseAsset: 'SOL',
+    quoteAsset: 'USDT',
+    claim:
+      direction === 'LONG'
+        ? 'SOL will strengthen over the stated horizon'
+        : 'SOL will weaken over the stated horizon',
+    direction,
+  } as const;
+}
+
 describe('server-issued argument options', () => {
   it('keeps the fixed-slot provider and application schemas aligned', () => {
     const optionIds = ['opt_primary', 'opt_secondary'];
@@ -229,6 +245,66 @@ describe('server-issued argument options', () => {
       option.qualitativeInterpretation
     ))).toBe(true);
   });
+
+  it.each(['LONG', 'SHORT'] as const)(
+    'builds grounded single-asset %s options without relative claims',
+    async (direction) => {
+      const thesis = singleAssetThesis(direction);
+      const ledger = capabilityLedger();
+      const assumptions = makeAssumptions();
+      const advocateOptions = authorizedArgumentPointCatalog({
+        thesis,
+        ledger,
+        assumptions,
+        stance: 'ADVOCATE',
+      });
+      const dissentOptions = authorizedArgumentPointCatalog({
+        thesis,
+        ledger,
+        assumptions,
+        stance: 'DISSENTER',
+      });
+
+      for (const options of [advocateOptions, dissentOptions]) {
+        expect(options.length).toBeGreaterThan(0);
+        expect(
+          options.every(
+            (option) =>
+              option.interpretationKind !== 'RELATIVE_RETURN_OBSERVATION' &&
+              option.interpretationKind !== 'RETURN_SPREAD_OBSERVATION' &&
+              !option.evidenceClaimIds.includes('ev_relative') &&
+              !option.evidenceClaimIds.includes('ev_spread')
+          )
+        ).toBe(true);
+        expect(options).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              interpretationKind: 'SINGLE_ASSET_HISTORICAL_PRICE_OBSERVATION',
+              qualitativeInterpretation: expect.stringContaining(
+                'does not establish future direction or persistence'
+              ),
+            }),
+          ])
+        );
+      }
+
+      const model = new QueueModel([
+        argumentSelectionPlanFromRequest,
+        argumentSelectionPlanFromRequest,
+      ]);
+      const analyst = new DeepSeekAnalystAdapter({
+        model,
+        now: () => new Date(FIXED_AT),
+      });
+      const advocate = await analyst.buildAdvocateCase(thesis, ledger, assumptions);
+      const dissent = await analyst.buildDissentCase(thesis, ledger, assumptions);
+
+      expect(() => assertArgumentEvidenceGrounding(advocate, ledger)).not.toThrow();
+      expect(() => assertArgumentEvidenceGrounding(dissent, ledger)).not.toThrow();
+      expect(() => assertAdvocateDissenterDistinct(advocate, dissent)).not.toThrow();
+      expect(model.requests).toHaveLength(2);
+    }
+  );
 
   it('assembles one through five grounded points with slot-owned weights', async () => {
     const ledger = capabilityLedger();

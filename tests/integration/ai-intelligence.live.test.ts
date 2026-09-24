@@ -160,14 +160,24 @@ describe.skipIf(!runLive)('DeepSeek + Bitget live intelligence integration', () 
       ]),
       ...result.invalidationConditions.flatMap((item) => [
         item.statement,
-        ...(item.type === 'QUALITATIVE'
-          ? [item.observableEvent, item.expectedWindow ?? '']
-          : []),
+        ...(item.type === 'QUALITATIVE' ? [item.observableEvent] : []),
       ]),
       ...result.brief.contradictions.flatMap((item) => [item.statement, item.explanation]),
       ...result.brief.unknowns,
     ];
     expect(modelAuthoredFinalText.some((value) => numericPattern.test(value))).toBe(false);
+    expect(
+      result.invalidationConditions.every(
+        (item) =>
+          item.type !== 'QUALITATIVE' ||
+          item.expectedWindow ===
+            (result.structuredThesis.timeHorizon.estimatedHours === undefined
+              ? 'Within the stated thesis horizon'
+              : `Within the stated thesis horizon of ${result.structuredThesis.timeHorizon.estimatedHours} ${
+                  result.structuredThesis.timeHorizon.estimatedHours === 1 ? 'hour' : 'hours'
+                }`)
+      )
+    ).toBe(true);
 
     console.log(
       'AI_LIVE_PROOF',

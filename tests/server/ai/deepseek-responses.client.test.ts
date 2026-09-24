@@ -494,7 +494,7 @@ describe('DeepSeekResponsesClient', () => {
       statement: 'Private invalidation statement',
       observableEvent: 'Private observable event',
       verificationSourceKind: 'BITGET_MARKET_DATA',
-      expectedWindow: 'Private expected window',
+      expectedWindow: 'THESIS_HORIZON',
     } as const;
     const providerSchema = createStressResearchJsonSchema({
       evidenceIds: ['ev_1'],

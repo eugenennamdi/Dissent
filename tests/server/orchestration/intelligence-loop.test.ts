@@ -24,6 +24,39 @@ function marketDesk(onCall?: () => void): MarketDeskPort {
   };
 }
 
+function singleAssetMarketDesk(asset: 'BTC' | 'ETH' | 'SOL'): MarketDeskPort {
+  return {
+    async gatherMarketObservations(thesis) {
+      const source = makeEvidenceLedger(thesis.id);
+      const market = `${asset}/USDT`;
+      const symbol = `${asset}USDT`;
+      const items = source.items.map((item) => ({
+        ...item,
+        claim:
+          item.observation.type === 'LAST_PRICE'
+            ? `${market} spot last price was observed in USDT per ${asset}.`
+            : `${market} spot changed over the aligned historical interval.`,
+        observation: {
+          ...item.observation,
+          market,
+          providerSymbol: symbol,
+        },
+        unit:
+          item.observation.type === 'LAST_PRICE' ? `USDT per ${asset}` : item.unit,
+      }));
+      return {
+        ledger: {
+          ...source,
+          id: `led_${asset.toLowerCase()}_single`,
+          items,
+        },
+        gaps: [],
+        complete: true,
+      };
+    },
+  };
+}
+
 function stressDraftWithoutScenarioArgumentReference(
   request: Parameters<typeof stressResearchDraftFromRequest>[0]
 ) {
@@ -81,6 +114,68 @@ describe('IntelligenceLoop', () => {
     expect(result.brief.humanDecision).toBeNull();
     expect(result).not.toHaveProperty('humanDecision');
   });
+
+  it.each([
+    { asset: 'BTC' as const, direction: 'LONG' as const, verb: 'strengthen' },
+    { asset: 'SOL' as const, direction: 'SHORT' as const, verb: 'weaken' },
+  ])(
+    'completes single-asset $asset $direction research without relative evidence',
+    async ({ asset, direction, verb }) => {
+      const input = {
+        ...thesisInput,
+        id: `inp_${asset.toLowerCase()}_${direction.toLowerCase()}`,
+        rawText: `${asset} will ${verb} over the next day.`,
+      };
+      const model = new QueueModel([
+        {
+          ...extractionOutput,
+          market: `${asset}/USDT`,
+          baseAsset: asset,
+          quoteAsset: 'USDT',
+          claim: `${asset} will ${verb} over the stated horizon`,
+          direction,
+          assumptions: [
+            {
+              ...extractionOutput.assumptions[0],
+              claim: `${asset} historical behavior remains relevant`,
+            },
+          ],
+        },
+        argumentSelectionPlanFromRequest,
+        argumentSelectionPlanFromRequest,
+        assumptionAssessmentDraftFromRequest,
+        stressResearchDraftFromRequest,
+        synthesisDraftFromRequest,
+      ]);
+      const result = await new IntelligenceLoop({
+        ai: new DeepSeekAnalystAdapter({
+          model,
+          now: () => new Date(FIXED_AT),
+        }),
+        marketDesk: singleAssetMarketDesk(asset),
+      }).run(input);
+
+      expect(result.structuredThesis).toMatchObject({
+        market: `${asset}/USDT`,
+        baseAsset: asset,
+        quoteAsset: 'USDT',
+        direction,
+      });
+      expect(
+        result.evidenceLedger.items.some((item) =>
+          ['RETURN_SPREAD', 'RELATIVE_RETURN'].includes(item.observation.type)
+        )
+      ).toBe(false);
+      expect(result.advocateCase.stance).toBe('ADVOCATE');
+      expect(result.dissentCase.stance).toBe('DISSENTER');
+      expect(result.assumptions).toHaveLength(1);
+      expect(result.assumptions[0]?.status).not.toBe('UNTESTED');
+      expect(result.stressScenarios).toHaveLength(2);
+      expect(result.invalidationConditions.length).toBeGreaterThan(0);
+      expect(result.brief.humanDecision).toBeNull();
+      expect(model.requests).toHaveLength(6);
+    }
+  );
 
   it('retries only a truncated late operation and preserves completed artifacts', async () => {
     const warning = vi.spyOn(console, 'warn').mockImplementation(() => undefined);

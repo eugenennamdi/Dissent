@@ -44,6 +44,33 @@ function marketDesk(): MarketDeskPort {
   };
 }
 
+function singleAssetMarketDesk(asset: 'BTC' | 'ETH' | 'SOL'): MarketDeskPort {
+  return {
+    async gatherMarketObservations(thesis) {
+      const source = makeEvidenceLedger(thesis.id);
+      const items = source.items.map((item) => ({
+        ...item,
+        claim:
+          item.observation.type === 'LAST_PRICE'
+            ? `${asset}/USDT spot last price was observed in USDT per ${asset}.`
+            : `${asset}/USDT spot changed over the aligned historical interval.`,
+        observation: {
+          ...item.observation,
+          market: `${asset}/USDT`,
+          providerSymbol: `${asset}USDT`,
+        },
+        unit:
+          item.observation.type === 'LAST_PRICE' ? `USDT per ${asset}` : item.unit,
+      }));
+      return {
+        ledger: { ...source, id: `led_${asset.toLowerCase()}_api`, items },
+        gaps: [],
+        complete: true,
+      };
+    },
+  };
+}
+
 function mockedResearchExecutor() {
   const model = new QueueModel([
     extractionOutput,
@@ -89,6 +116,56 @@ describe('POST /api/research', () => {
     expect(() => assertGeneratedBriefInvariants(body.brief)).not.toThrow();
   });
 
+  it('returns a completed single-asset brief through the unchanged public workflow', async () => {
+    const rawText = 'SOL will weaken over the next day.';
+    const model = new QueueModel([
+      {
+        ...extractionOutput,
+        market: 'SOL/USDT',
+        baseAsset: 'SOL',
+        quoteAsset: 'USDT',
+        claim: 'SOL will weaken over the stated horizon',
+        direction: 'SHORT',
+        assumptions: [
+          {
+            ...extractionOutput.assumptions[0],
+            claim: 'SOL historical behavior remains relevant',
+          },
+        ],
+      },
+      argumentSelectionPlanFromRequest,
+      argumentSelectionPlanFromRequest,
+      assumptionAssessmentDraftFromRequest,
+      stressResearchDraftFromRequest,
+      synthesisDraftFromRequest,
+    ]);
+    const response = await handleResearchPost(
+      request(JSON.stringify({ thesis: rawText })),
+      {
+        enabled: true,
+        execute: (submission) =>
+          executeResearchSubmission(submission, {
+            model,
+            marketDesk: singleAssetMarketDesk('SOL'),
+            now: () => new Date(FIXED_AT),
+            inputIdFactory: () => 'inp_single_api',
+          }),
+      }
+    );
+    const body = ResearchSuccessResponseV1Schema.parse(await response.json());
+
+    expect(response.status).toBe(200);
+    expect(body).toMatchObject({ ok: true, state: 'COMPLETED' });
+    expect(body.brief.structuredThesis).toMatchObject({
+      market: 'SOL/USDT',
+      baseAsset: 'SOL',
+      quoteAsset: 'USDT',
+      direction: 'SHORT',
+    });
+    expect(body.brief.humanDecision).toBeNull();
+    expect(model.requests).toHaveLength(6);
+  });
+
   it('rejects malformed, structurally invalid, and oversized requests before execution', async () => {
     const execute = vi.fn();
     const malformed = await handleResearchPost(request('{not-json'), {
@@ -116,7 +193,7 @@ describe('POST /api/research', () => {
 
   it('enforces the supported market restriction through the real application service', async () => {
     const response = await handleResearchPost(
-      request(JSON.stringify({ thesis: 'SOL will outperform USDT this week' })),
+      request(JSON.stringify({ thesis: 'XRP will outperform DOGE this week' })),
       {
         enabled: true,
         execute: (submission) =>

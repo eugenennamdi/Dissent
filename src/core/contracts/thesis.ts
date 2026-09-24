@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { resolveSupportedThesisMarket } from '../domain/supported-markets';
 
 /**
  * ThesisInputV1
@@ -46,19 +47,30 @@ export type TimeHorizonV1 = z.infer<typeof TimeHorizonV1Schema>;
  * Normalized, parsed market hypothesis extracted from the raw thesis.
  * Strictly separates the original input from the structured interpretation.
  */
-export const StructuredThesisV1Schema = z.object({
-  id: z.string().min(1),
-  thesisInputId: z.string().min(1),
-  originalThesis: z.string().min(1),
-  market: z.string().min(1), // e.g. "ETH/BTC", "SOL/USDT"
-  baseAsset: z.string().min(1), // e.g. "ETH"
-  quoteAsset: z.string().min(1), // e.g. "BTC"
-  claim: z.string().min(1), // concise normalized thesis claim
-  direction: ThesisDirectionV1Schema,
-  timeHorizon: TimeHorizonV1Schema,
-  catalysts: z.array(z.string().min(1)).default([]),
-  createdAt: z.string().datetime(),
-  schemaVersion: z.literal(1).default(1),
-});
+export const StructuredThesisV1Schema = z
+  .object({
+    id: z.string().min(1),
+    thesisInputId: z.string().min(1),
+    originalThesis: z.string().min(1),
+    market: z.string().min(1), // e.g. "ETH/BTC", "SOL/USDT"
+    baseAsset: z.string().min(1), // e.g. "ETH"
+    quoteAsset: z.string().min(1), // e.g. "BTC"
+    claim: z.string().min(1), // concise normalized thesis claim
+    direction: ThesisDirectionV1Schema,
+    timeHorizon: TimeHorizonV1Schema,
+    catalysts: z.array(z.string().min(1)).default([]),
+    createdAt: z.string().datetime(),
+    schemaVersion: z.literal(1).default(1),
+  })
+  .superRefine((thesis, context) => {
+    if (!resolveSupportedThesisMarket(thesis)) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['market'],
+        message:
+          'Market, baseAsset, quoteAsset, and direction must form a supported Dissent thesis combination.',
+      });
+    }
+  });
 
 export type StructuredThesisV1 = z.infer<typeof StructuredThesisV1Schema>;

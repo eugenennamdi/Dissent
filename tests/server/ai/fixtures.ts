@@ -391,7 +391,7 @@ export function stressDraft(input: {
         statement: 'ETH relative strength reverses across aligned market observations',
         observableEvent: 'Bitget evidence shows ETH no longer outperforming BTC over aligned intervals',
         verificationSourceKind: 'BITGET_MARKET_DATA',
-        expectedWindow: 'Within the stated thesis horizon',
+        expectedWindow: 'THESIS_HORIZON',
       },
       {
         targetAssumptionIds: [assumptionIds[0]],
@@ -399,7 +399,7 @@ export function stressDraft(input: {
         statement: 'Independent regime evidence no longer supports improving risk appetite',
         observableEvent: 'A primary macro or sentiment source records broad risk deterioration',
         verificationSourceKind: 'FUTURE_PRIMARY_SOURCE_REQUIRED',
-        expectedWindow: 'Within the stated thesis horizon',
+        expectedWindow: 'THESIS_HORIZON',
       },
     ],
   };
@@ -485,16 +485,41 @@ export function assumptionAssessmentDraftFromRequest(
 export function stressResearchDraftFromRequest(
   request: StructuredModelRequest<z.ZodTypeAny>
 ) {
+  const thesis = request.userPayload.thesis as {
+    baseAsset: string;
+    quoteAsset: string;
+    direction: string;
+  };
   const assumptions = request.userPayload.testedAssumptions as Array<{ id: string }>;
   const argumentsValue = request.userPayload.arguments as Array<{
     points: Array<{ id: string }>;
   }>;
   const evidence = request.userPayload.evidenceCatalog as Array<{ id: string }>;
-  return stressResearchDraft({
+  const draft = stressResearchDraft({
     assumptionIds: assumptions.map((item) => item.id),
     argumentPointIds: argumentsValue.flatMap((item) => item.points.map((point) => point.id)),
     evidenceIds: evidence.map((item) => item.id),
   });
+  const relative = thesis.direction.startsWith('RELATIVE_');
+  draft.scenarios[0]!.name = relative
+    ? 'Relative momentum reversal'
+    : 'Historical price behavior reversal';
+  draft.scenarios[0]!.hypotheticalChange = relative
+    ? `${thesis.baseAsset} relative strength reverses while ${thesis.quoteAsset} recovers leadership`
+    : `${thesis.baseAsset} market behavior reverses during the stated horizon`;
+  draft.scenarios[0]!.transmissionMechanism = relative
+    ? 'A reversal would break the continuation premise behind the relative thesis'
+    : 'A reversal would break the directional continuation premise behind the thesis';
+  draft.scenarios[0]!.consequenceForThesis = relative
+    ? 'The expected relative performance may fail to persist'
+    : 'The expected directional outcome may fail to occur';
+  draft.invalidationConditions[0]!.statement = relative
+    ? `${thesis.baseAsset} relative strength reverses across aligned market observations`
+    : `${thesis.baseAsset} historical market behavior reverses`;
+  draft.invalidationConditions[0]!.observableEvent = relative
+    ? `Bitget evidence shows ${thesis.baseAsset} no longer outperforming ${thesis.quoteAsset} over aligned intervals`
+    : `Bitget evidence shows ${thesis.baseAsset} moving against the directional thesis`;
+  return draft;
 }
 
 export function synthesisDraft(input: {
@@ -515,7 +540,7 @@ export function synthesisDraft(input: {
       },
     ],
     unknowns: [
-      'Whether observed relative strength will persist through the stated horizon remains unknown',
+      'Whether observed market behavior will persist through the stated horizon remains unknown',
     ],
   };
 }

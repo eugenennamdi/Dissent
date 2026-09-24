@@ -11,6 +11,7 @@ import {
   ApiFailureResponseV1Schema,
   ResearchSuccessResponseV1Schema,
 } from '@/lib/api/contracts';
+import { assertAdvocateDissenterDistinct } from '@/server/ai/argument-validation';
 import { DeepSeekResponsesClient } from '@/server/ai/deepseek-responses.client';
 import type {
   ModelCallMetadata,
@@ -28,11 +29,22 @@ import {
 loadEnvConfig(process.cwd());
 
 const runLive = process.env.RUN_APP_API_LIVE === '1';
+const ETH_BTC_LIVE_THESIS =
+  'I think ETH will outperform BTC over the next 48 hours because risk appetite is improving and ETH momentum is strengthening.';
+const SOL_BTC_LIVE_THESIS =
+  'I think SOL will outperform BTC over the next 48 hours because risk appetite is improving and SOL momentum is strengthening.';
+const SOL_USDT_LIVE_THESIS =
+  "I think SOL's USDT-denominated market price will rise over the next 48 hours because network activity and risk appetite are strengthening.";
+const liveResearchMarket = process.env.LIVE_RESEARCH_MARKET ?? 'ETH/BTC';
 
 describe.skipIf(!runLive)('Live application API', () => {
   it('runs the real pipeline and leaves the human decision unset', async () => {
     const thesis =
-      'I think ETH will outperform BTC over the next 48 hours because risk appetite is improving and ETH momentum is strengthening.';
+      liveResearchMarket === 'SOL/BTC'
+        ? SOL_BTC_LIVE_THESIS
+        : liveResearchMarket === 'SOL/USDT'
+          ? SOL_USDT_LIVE_THESIS
+          : ETH_BTC_LIVE_THESIS;
     const completedModelCalls: ModelCallMetadata[] = [];
     const attemptedModelCalls: AttemptedModelCall[] = [];
     const deepSeek = new DeepSeekResponsesClient();
@@ -134,6 +146,7 @@ describe.skipIf(!runLive)('Live application API', () => {
     const research = ResearchSuccessResponseV1Schema.parse(researchPayload);
 
     expect(researchResponse.status).toBe(200);
+    expect(research.state).toBe('COMPLETED');
     expect(research.brief.originalThesis).toBe(thesis);
     expect(research.brief.humanDecision).toBeNull();
     expect(research.advocateCase.stance).toBe('ADVOCATE');
@@ -153,17 +166,116 @@ describe.skipIf(!runLive)('Live application API', () => {
     expect(() =>
       assertArgumentEvidenceGrounding(research.advocateCase, research.brief.evidenceLedger)
     ).not.toThrow();
-    expect(completedModelCalls).toHaveLength(6);
-    expect(completedModelCalls.map((call) => call.operation).sort()).toEqual(
-      [
-        'structureThesis',
-        'buildAdvocateCase',
-        'buildDissentCase',
-        'assessAssumptions',
-        'generateStressResearch',
-        'synthesizeBrief',
-      ].sort()
-    );
+    expect(() =>
+      assertAdvocateDissenterDistinct(research.advocateCase, research.brief.theDissent)
+    ).not.toThrow();
+    const expectedOperations = [
+      'structureThesis',
+      'buildAdvocateCase',
+      'buildDissentCase',
+      'assessAssumptions',
+      'generateStressResearch',
+      'synthesizeBrief',
+    ].sort();
+    if (liveResearchMarket !== 'ETH/BTC') {
+      expect([...new Set(completedModelCalls.map((call) => call.operation))].sort()).toEqual(
+        expectedOperations
+      );
+    } else {
+      expect(completedModelCalls).toHaveLength(6);
+      expect(completedModelCalls.map((call) => call.operation).sort()).toEqual(
+        expectedOperations
+      );
+    }
+
+    if (liveResearchMarket === 'SOL/BTC') {
+      expect(research.brief.structuredThesis).toMatchObject({
+        market: 'SOL/BTC',
+        baseAsset: 'SOL',
+        quoteAsset: 'BTC',
+        direction: 'RELATIVE_LONG',
+      });
+      const evidence = research.brief.evidenceLedger.items;
+      expect(evidence.some((item) => item.observation.market === 'SOL/USDT')).toBe(true);
+      expect(evidence.some((item) => item.observation.market === 'BTC/USDT')).toBe(true);
+      expect(
+        evidence.some(
+          (item) => item.observation.market === 'SOL/BTC' && item.nature !== 'DERIVED'
+        )
+      ).toBe(false);
+      const derivedComparison = evidence.filter((item) =>
+        ['RETURN_SPREAD', 'RELATIVE_RETURN'].includes(item.observation.type)
+      );
+      expect(derivedComparison.map((item) => item.observation.type).sort()).toEqual([
+        'RELATIVE_RETURN',
+        'RETURN_SPREAD',
+      ]);
+      expect(
+        derivedComparison.every(
+          (item) =>
+            item.observation.market === 'SOL/BTC' &&
+            item.observation.instrumentType === 'DERIVED_SPOT_PAIR' &&
+            item.observation.providerSymbol === 'SOLUSDT:BTCUSDT' &&
+            item.nature === 'DERIVED' &&
+            item.provenance.sourceType === 'DERIVED_ANALYTICS' &&
+            item.derivedFromEvidenceIds.length === 2 &&
+            item.derivedFromEvidenceIds.every((sourceId) =>
+              evidence.some((source) => source.id === sourceId)
+            )
+        )
+      ).toBe(true);
+    }
+
+    if (liveResearchMarket === 'SOL/USDT') {
+      expect(research.brief.structuredThesis).toMatchObject({
+        market: 'SOL/USDT',
+        baseAsset: 'SOL',
+        quoteAsset: 'USDT',
+        direction: 'LONG',
+      });
+      const evidence = research.brief.evidenceLedger.items;
+      expect(new Set(evidence.map((item) => item.observation.market))).toEqual(
+        new Set(['SOL/USDT'])
+      );
+      expect(new Set(evidence.map((item) => item.observation.providerSymbol))).toEqual(
+        new Set(['SOLUSDT'])
+      );
+      expect(
+        evidence.some((item) =>
+          ['RETURN_SPREAD', 'RELATIVE_RETURN'].includes(item.observation.type)
+        )
+      ).toBe(false);
+      expect(
+        evidence.some((item) => item.observation.instrumentType === 'DERIVED_SPOT_PAIR')
+      ).toBe(false);
+      expect(new Set(evidence.map((item) => item.observation.type))).toEqual(
+        new Set([
+          'LAST_PRICE',
+          'PRICE_CHANGE_24H',
+          'BASE_VOLUME_24H',
+          'FUNDING_RATE',
+          'OPEN_INTEREST',
+          'CANDLE_OPEN',
+          'CANDLE_CLOSE',
+          'INTERVAL_PRICE_CHANGE',
+        ])
+      );
+      expect(research.brief.stressScenarios).toHaveLength(2);
+    }
+
+    const thesisHours = research.brief.structuredThesis.timeHorizon.estimatedHours;
+    const expectedWindow =
+      thesisHours === undefined
+        ? 'Within the stated thesis horizon'
+        : `Within the stated thesis horizon of ${thesisHours} ${
+            thesisHours === 1 ? 'hour' : 'hours'
+          }`;
+    expect(
+      research.brief.invalidationConditions.every(
+        (condition) =>
+          condition.type === 'QUALITATIVE' && condition.expectedWindow === expectedWindow
+      )
+    ).toBe(true);
 
     console.log(
       'APPLICATION_API_LIVE_PROOF',
@@ -196,6 +308,39 @@ describe.skipIf(!runLive)('Live application API', () => {
             completedModelCalls
           ),
           validationPassed: true,
+          structuredThesis: {
+            market: research.brief.structuredThesis.market,
+            baseAsset: research.brief.structuredThesis.baseAsset,
+            quoteAsset: research.brief.structuredThesis.quoteAsset,
+            direction: research.brief.structuredThesis.direction,
+          },
+          evidenceMarkets: [
+            ...new Set(
+              research.brief.evidenceLedger.items.map((item) => item.observation.market)
+            ),
+          ],
+          evidenceObservationTypes: [
+            ...new Set(
+              research.brief.evidenceLedger.items.map((item) => item.observation.type)
+            ),
+          ],
+          expectedWindows: research.brief.invalidationConditions.map((condition) =>
+            condition.type === 'QUALITATIVE' ? condition.expectedWindow : condition.timeframe
+          ),
+          derivedComparison: research.brief.evidenceLedger.items
+            .filter((item) =>
+              ['RETURN_SPREAD', 'RELATIVE_RETURN'].includes(item.observation.type)
+            )
+            .map((item) => ({
+              type: item.observation.type,
+              market: item.observation.market,
+              instrumentType: item.observation.instrumentType,
+              providerSymbol: item.observation.providerSymbol,
+              value: item.value,
+              unit: item.unit,
+              sourceType: item.provenance.sourceType,
+              sourceCount: item.derivedFromEvidenceIds.length,
+            })),
         },
         null,
         2
