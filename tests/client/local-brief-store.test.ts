@@ -5,7 +5,9 @@ import type { HumanDecisionV1 } from '@/core/contracts/human-decision';
 import {
   saveResearchRun,
   loadStoredRuns,
+  getActiveRun,
   getActiveOrLatestRun,
+  setActiveRunId,
   updateStoredDecision,
   deleteStoredRun,
   clearAllStoredRuns,
@@ -270,6 +272,21 @@ describe('LocalBriefStore', () => {
     saveResearchRun(sampleRun);
     clearAllStoredRuns();
     expect(loadStoredRuns()).toHaveLength(0);
+  });
+
+  it('returns active run when activeRunId is set and null when cleared for compose mode', () => {
+    saveResearchRun(sampleRun);
+    expect(getActiveRun()?.runId).toBe('run_test_1');
+
+    // When user returns to compose mode / new thesis
+    setActiveRunId(null);
+    expect(getActiveRun()).toBeNull();
+
+    // Historical runs remain preserved in storage
+    expect(loadStoredRuns()).toHaveLength(1);
+
+    // Explicit getActiveOrLatestRun still finds it if requested
+    expect(getActiveOrLatestRun()?.runId).toBe('run_test_1');
   });
 
   it('handles QuotaExceededError gracefully without silent deletion', () => {

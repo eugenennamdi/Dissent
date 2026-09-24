@@ -11,7 +11,7 @@ import {
 import {
   type StoredResearchRunV1,
   loadStoredRuns,
-  getActiveOrLatestRun,
+  getActiveRun,
   saveResearchRun,
   updateStoredDecision,
   deleteStoredRun,
@@ -77,10 +77,10 @@ export default function Home() {
       const runs = loadStoredRuns();
       setHistoryRuns(runs);
 
-      const latest = getActiveOrLatestRun();
-      if (latest) {
-        setActiveRun(latest);
-        setActiveThesis(latest.brief.originalThesis);
+      const active = getActiveRun();
+      if (active) {
+        setActiveRun(active);
+        setActiveThesis(active.brief.originalThesis);
         setView('BRIEF');
       }
     });
@@ -147,6 +147,7 @@ export default function Home() {
               'The research request could not be completed by the server.'
           );
         }
+        setActiveRunId(null);
         setView('COMPOSE');
       }
     } catch (err) {
@@ -155,6 +156,7 @@ export default function Home() {
           ? err.message
           : 'Network failure or server timeout while communicating with the research engine.'
       );
+      setActiveRunId(null);
       setView('COMPOSE');
     } finally {
       setIsSubmittingResearch(false);

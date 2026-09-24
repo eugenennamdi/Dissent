@@ -6,7 +6,6 @@ import { MAX_THESIS_CHARACTERS } from '@/lib/api/contracts';
 import {
   ArrowRight,
   AlertCircle,
-  Clock,
 } from 'lucide-react';
 import { ArchitectureModal } from '@/components/ArchitectureModal';
 
@@ -112,8 +111,7 @@ export function ThesisComposer({
           </h1>
 
           <p className="text-sm sm:text-base text-muted-foreground leading-relaxed max-w-2xl mx-auto font-sans text-balance">
-            Dissent extracts your market thesis for native US equities (NVDA, COIN, MSFT, MSTR, TSLA, AAPL, AMD, META), pulls verifiable market quotes and fundamental valuation ratios from Bitget,
-            constructs grounded supporting and counter-arguments, and stress-tests underlying assumptions.
+            Turn a US-stock thesis into an evidence-grounded research brief. Dissent builds the case for and against your idea, tests its assumptions, and shows you what the available data cannot establish.
           </p>
         </header>
 
@@ -132,7 +130,7 @@ export function ThesisComposer({
                   if (errorMessage) onClearError();
                 }}
                 onKeyDown={handleKeyDown}
-                placeholder="e.g. NVDA will sustain its upward valuation trajectory over the next 90 days as strong market capitalization and trading volume support current earnings multiples..."
+                placeholder="e.g. I think NVDA will face valuation pressure over the next 60 days…"
                 className="w-full bg-transparent p-0 text-sm sm:text-base text-foreground placeholder:text-stone-400/75 focus:outline-none resize-none min-h-[100px] font-sans leading-relaxed border-0 focus:ring-0"
                 disabled={isSubmitting}
                 aria-label="Market Thesis"
@@ -144,11 +142,6 @@ export function ThesisComposer({
               <div className="flex items-center gap-3 text-xs text-stone-500">
                 <span className="font-mono text-[11px] text-stone-400 tabular-nums">
                   {charCount} / {MAX_THESIS_CHARACTERS}
-                </span>
-                <span className="text-stone-300">•</span>
-                <span className="text-[11px] text-stone-600 font-medium flex items-center gap-1.5">
-                  <Clock className="w-3 h-3 text-stone-400" />
-                  <span>5-stage adversarial synthesis (~40s)</span>
                 </span>
                 {thesisText.length > 0 && (
                   <>
@@ -191,30 +184,45 @@ export function ThesisComposer({
           </div>
 
           {/* Prompt Inspiration Chips (Centered Below the Composer) */}
-          <div className="flex flex-wrap items-center justify-center gap-2 text-xs pt-0.5">
-            <span className="text-stone-500 font-medium text-xs shrink-0 mr-1">
+          <div className="flex flex-col items-center justify-center gap-2 text-xs pt-0.5">
+            <span className="text-stone-500 font-medium text-xs">
               Try thesis:
             </span>
-            <div className="flex flex-wrap items-center justify-center gap-1.5">
-              {THESIS_PRESETS.map((preset) => {
-                const isSelected = selectedPresetId === preset.id || thesisText === preset.text;
-                return (
-                  <button
-                    key={preset.id}
-                    type="button"
-                    onClick={() => handleSelectPreset(preset)}
-                    disabled={isSubmitting}
-                    className={`px-3 py-1 rounded-full text-xs font-medium transition-all duration-150 cursor-pointer active:scale-[0.97] select-none border ${
-                      isSelected
-                        ? 'bg-zinc-900 text-white border-zinc-900'
-                        : 'bg-white hover:bg-stone-50 text-stone-700 border-stone-200 hover:border-stone-300'
-                    }`}
-                  >
-                    {preset.label}
-                  </button>
-                );
-              })}
+            <div className="flex flex-col items-center gap-1.5 w-full">
+              {[THESIS_PRESETS.slice(0, 3), THESIS_PRESETS.slice(3, 5)].map((presetRow, rowIndex) => (
+                <div key={rowIndex} className="flex flex-wrap items-center justify-center gap-1.5">
+                  {presetRow.map((preset) => {
+                    const isSelected = selectedPresetId === preset.id || thesisText === preset.text;
+                    return (
+                      <button
+                        key={preset.id}
+                        type="button"
+                        onClick={() => handleSelectPreset(preset)}
+                        disabled={isSubmitting}
+                        className={`px-3 py-1 rounded-full text-xs font-medium transition-all duration-150 cursor-pointer active:scale-[0.97] select-none border ${
+                          isSelected
+                            ? 'bg-zinc-900 text-white border-zinc-900'
+                            : 'bg-white hover:bg-stone-50 text-stone-700 border-stone-200 hover:border-stone-300'
+                        }`}
+                      >
+                        {preset.label}
+                      </button>
+                    );
+                  })}
+                </div>
+              ))}
             </div>
+          </div>
+
+          {/* Supported Stocks Coverage Line */}
+          <div className="flex flex-wrap items-center justify-center gap-x-2 gap-y-1 text-xs pt-1 sm:pt-2">
+            <span className="text-[10px] sm:text-[11px] font-medium tracking-wider uppercase text-stone-500 font-mono">
+              RESEARCH COVERAGE
+            </span>
+            <span className="text-stone-300 hidden sm:inline select-none">·</span>
+            <span className="font-mono text-[11px] sm:text-xs text-stone-600 tracking-tight text-center">
+              NVDA · COIN · MSFT · MSTR · TSLA · AAPL · AMD · META
+            </span>
           </div>
 
           {/* Error Alert */}

@@ -1,6 +1,7 @@
 'use client';
 
 import * as React from 'react';
+import Image from 'next/image';
 
 interface WorkstationHeaderProps {
   currentView: 'COMPOSE' | 'RESEARCH' | 'BRIEF';
@@ -18,9 +19,20 @@ export function WorkstationHeader({
   return (
     <header className="sticky top-0 z-30 w-full border-b border-border/70 bg-card/90 backdrop-blur-md px-4 sm:px-8 py-3.5 flex items-center justify-between text-xs font-mono">
       <div className="flex items-center gap-2 sm:gap-4 min-w-0">
-        <div className="flex items-center gap-2 shrink-0">
-          <span className="font-bold tracking-wider text-foreground text-sm font-sans">DISSENT</span>
-          <span className="text-muted-foreground/40 hidden sm:inline">{'//'}</span>
+        <div className="flex items-center gap-2.5 shrink-0">
+          <Image
+            src="/icon.png"
+            alt=""
+            width={32}
+            height={32}
+            priority
+            className="h-7 w-7 sm:h-8 sm:w-8 object-contain"
+            aria-hidden="true"
+          />
+          <span className="font-bold tracking-tight text-foreground text-base sm:text-lg font-sans">
+            Dissent
+          </span>
+          <span className="text-muted-foreground/40 hidden sm:inline ml-0.5">{'//'}</span>
           <span className="text-muted-foreground hidden sm:inline tracking-wider uppercase text-[11px]">
             AI Trading Desk
           </span>

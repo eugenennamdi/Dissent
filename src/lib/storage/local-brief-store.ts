@@ -77,38 +77,74 @@ export function loadStoredRuns(): StoredResearchRunV1[] {
 }
 
 /**
- * Gets the most recently viewed or saved run.
+ * Safely accesses sessionStorage if available in the current environment.
  */
-export function getActiveOrLatestRun(): StoredResearchRunV1 | null {
-  if (!isStorageAvailable()) return null;
+function getSessionStorage(): Storage | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    return window.sessionStorage ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Gets the currently active research run if an active run ID is explicitly recorded.
+ * Returns null if no run is active (e.g. user is in compose mode on the homepage).
+ * Unlike getActiveOrLatestRun, this does NOT fall back to historical runs.
+ */
+export function getActiveRun(): StoredResearchRunV1 | null {
+  if (!isStorageAvailable() && !getSessionStorage()) return null;
 
   const runs = loadStoredRuns();
   if (runs.length === 0) return null;
 
   try {
-    const activeRunId = window.localStorage.getItem(ACTIVE_RUN_KEY);
+    const session = getSessionStorage();
+    const activeRunId =
+      session?.getItem(ACTIVE_RUN_KEY) ??
+      (isStorageAvailable() ? window.localStorage.getItem(ACTIVE_RUN_KEY) : null);
+
     if (activeRunId) {
       const matched = runs.find((r) => r.runId === activeRunId);
       if (matched) return matched;
     }
   } catch {
-    // Fall back to latest run below
+    // Non-fatal
   }
 
-  // Fall back to most recently saved
+  return null;
+}
+
+/**
+ * Gets the active research run, or falls back to the most recent run if explicitly requested.
+ * Prefer getActiveRun() when an explicit active run is required.
+ */
+export function getActiveOrLatestRun(): StoredResearchRunV1 | null {
+  const active = getActiveRun();
+  if (active) return active;
+
+  const runs = loadStoredRuns();
   return runs[0] ?? null;
 }
 
 /**
- * Sets the active run ID.
+ * Sets or clears the active run ID.
+ * When runId is null, removes the active run indicator so homepage reloads do not navigate to history.
  */
 export function setActiveRunId(runId: string | null): void {
-  if (!isStorageAvailable()) return;
   try {
+    const session = getSessionStorage();
     if (runId) {
-      window.localStorage.setItem(ACTIVE_RUN_KEY, runId);
+      session?.setItem(ACTIVE_RUN_KEY, runId);
+      if (isStorageAvailable()) {
+        window.localStorage.setItem(ACTIVE_RUN_KEY, runId);
+      }
     } else {
-      window.localStorage.removeItem(ACTIVE_RUN_KEY);
+      session?.removeItem(ACTIVE_RUN_KEY);
+      if (isStorageAvailable()) {
+        window.localStorage.removeItem(ACTIVE_RUN_KEY);
+      }
     }
   } catch {
     // Non-fatal
@@ -144,7 +180,7 @@ export function saveResearchRun(run: StoredResearchRunV1): SaveResult {
 
     const serialized = JSON.stringify(updated);
     window.localStorage.setItem(STORAGE_KEY, serialized);
-    window.localStorage.setItem(ACTIVE_RUN_KEY, run.runId);
+    setActiveRunId(run.runId);
 
     return { ok: true };
   } catch (err) {
@@ -231,9 +267,12 @@ export function deleteStoredRun(runId: string): boolean {
     const filtered = existing.filter((r) => r.runId !== runId);
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify(filtered));
 
-    const currentActive = window.localStorage.getItem(ACTIVE_RUN_KEY);
+    const session = getSessionStorage();
+    const currentActive =
+      session?.getItem(ACTIVE_RUN_KEY) ??
+      (isStorageAvailable() ? window.localStorage.getItem(ACTIVE_RUN_KEY) : null);
     if (currentActive === runId) {
-      window.localStorage.removeItem(ACTIVE_RUN_KEY);
+      setActiveRunId(null);
     }
     return true;
   } catch {
@@ -248,7 +287,7 @@ export function clearAllStoredRuns(): boolean {
   if (!isStorageAvailable()) return false;
   try {
     window.localStorage.removeItem(STORAGE_KEY);
-    window.localStorage.removeItem(ACTIVE_RUN_KEY);
+    setActiveRunId(null);
     return true;
   } catch {
     return false;

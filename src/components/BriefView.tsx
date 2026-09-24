@@ -217,13 +217,8 @@ export function BriefView({
       <header className="border-b border-border/70 bg-card/90 backdrop-blur-md sticky top-0 z-30">
         <div className="max-w-6xl mx-auto px-4 sm:px-6 h-14 flex items-center justify-between gap-2">
           <div className="flex items-center gap-2 sm:gap-3 min-w-0">
-            <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
-              <span className="font-mono text-xs sm:text-sm font-bold tracking-wider text-foreground bg-stone-100 border border-stone-200 px-2 py-0.5 rounded">
-                DISSENT
-              </span>
-            </div>
             {brief.structuredThesis.market && (
-              <div className="hidden md:flex items-center pl-3 border-l border-border text-xs font-mono">
+              <div className="flex items-center text-xs font-mono">
                 <span className="text-foreground font-semibold">{brief.structuredThesis.market}</span>
               </div>
             )}

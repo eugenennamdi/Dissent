@@ -20,20 +20,26 @@ describe('ThesisComposer Component', () => {
 
     // Masthead & Value Prop
     expect(html).toContain('Stress-test the trade before the market does.');
-    expect(html).toContain('native US equities (NVDA, COIN, MSFT, MSTR, TSLA, AAPL, AMD, META)');
+    expect(html).toContain(
+      'Turn a US-stock thesis into an evidence-grounded research brief. Dissent builds the case for and against your idea, tests its assumptions, and shows you what the available data cannot establish.'
+    );
 
-    // Composer Input & Presets
+    // Composer Input, Presets & Coverage Line
     expect(html).toContain('thesis-input');
-    expect(html).toContain('NVDA will sustain its upward valuation trajectory over the next 90 days');
+    expect(html).toContain('e.g. I think NVDA will face valuation pressure over the next 60 days…');
     expect(html).toContain('Try thesis:');
     expect(html).toContain('NVDA Valuation Support');
     expect(html).toContain('COIN Volume Hypothesis');
     expect(html).toContain('MSFT Enterprise Stability');
     expect(html).toContain('TSLA Multiple Compression');
     expect(html).toContain('MSTR Multiple Scrutiny');
+    expect(html).toContain('RESEARCH COVERAGE');
+    expect(html).toContain('NVDA · COIN · MSFT · MSTR · TSLA · AAPL · AMD · META');
 
     // Action Dock
-    expect(html).toContain('5-stage adversarial synthesis (~40s)');
+    expect(html).not.toContain('Evidence-grounded research');
+    expect(html).not.toContain('5-stage adversarial synthesis');
+    expect(html).not.toContain('(~40s)');
     expect(html).toContain('Challenge thesis');
 
     // Footer & Architecture Modal Trigger
