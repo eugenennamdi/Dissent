@@ -33,8 +33,20 @@ const JSON_RESPONSE_HEADERS = {
 export function assertSameOriginRequest(request: Request): void {
   const origin = request.headers.get('origin');
   const fetchSite = request.headers.get('sec-fetch-site');
+
+  // Reject explicit cross-origin browser requests.
   if (fetchSite === 'cross-site' || (origin && origin !== new URL(request.url).origin)) {
     throw DissentError.invalidInput('Cross-origin API requests are not accepted.', {
+      httpStatus: 403,
+    });
+  }
+
+  // Reject headless requests that carry neither sec-fetch-site nor origin.
+  // All modern browsers send sec-fetch-site on same-origin fetches; tools like
+  // curl and Postman (default settings) send neither, so requiring at least one
+  // of these headers prevents direct scripted access to cost-bearing endpoints.
+  if (fetchSite === null && origin === null) {
+    throw DissentError.invalidInput('API requests must originate from the application.', {
       httpStatus: 403,
     });
   }

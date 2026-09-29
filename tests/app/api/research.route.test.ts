@@ -291,4 +291,18 @@ describe('POST /api/research', () => {
       'INVALID_INPUT'
     );
   });
+  it('rejects headless requests with no origin and no sec-fetch-site header', async () => {
+    const response = await handleResearchPost(
+      new Request('http://localhost/api/research', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ thesis: thesisInput.rawText }),
+      }),
+      { enabled: true, execute: vi.fn() }
+    );
+    expect(response.status).toBe(403);
+    expect(ApiFailureResponseV1Schema.parse(await response.json()).error.code).toBe(
+      'INVALID_INPUT'
+    );
+  });
 });
