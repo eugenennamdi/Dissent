@@ -6,15 +6,21 @@ export const McpJsonRpcErrorSchema = z.object({
   data: z.unknown().optional(),
 });
 
+export const McpStructuredDataPayloadSchema = z
+  .object({
+    provider: z.string().optional(),
+    results: z.unknown().refine((val) => val !== undefined, {
+      message: 'results field is required in structured data',
+    }),
+  })
+  .passthrough();
+
 export const McpStructuredContentSchema = z.object({
   status_code: z.number(),
   success: z.boolean(),
   data: z
-    .object({
-      provider: z.string().optional(),
-      results: z.unknown(),
-    })
-    .passthrough()
+    .union([McpStructuredDataPayloadSchema, z.string()])
+    .nullable()
     .optional(),
   error: z.string().nullable().optional(),
 });
@@ -75,6 +81,7 @@ export const BitgetEquityFundamentalRatioRecordSchema = z
   .passthrough();
 
 export type McpJsonRpcError = z.infer<typeof McpJsonRpcErrorSchema>;
+export type McpStructuredDataPayload = z.infer<typeof McpStructuredDataPayloadSchema>;
 export type McpStructuredContent = z.infer<typeof McpStructuredContentSchema>;
 export type McpResponseEnvelope = z.infer<typeof McpResponseEnvelopeSchema>;
 export type BitgetEquityQuoteRecord = z.infer<typeof BitgetEquityQuoteRecordSchema>;

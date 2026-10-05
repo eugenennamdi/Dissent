@@ -2,7 +2,9 @@ import { DissentError } from '@/core/errors/domain-errors';
 import {
   McpResponseEnvelopeSchema,
   McpStructuredContentSchema,
+  McpStructuredDataPayloadSchema,
   type McpResponseEnvelope,
+  type McpStructuredDataPayload,
 } from './bitget-mcp.schemas';
 
 export const BITGET_MCP_ENDPOINT = 'https://agent.bitget.com/mcp';
@@ -67,6 +69,183 @@ export interface McpQueryResult<T = unknown> {
   provider?: string;
   sessionId: string | null;
   retrievedAt: string;
+}
+
+export interface McpNormalizedStructuredData {
+  provider?: string;
+  results: unknown;
+}
+
+/**
+ * Normalizes structuredContent.data from Bitget MCP.
+ * Handles both object representations and JSON-string representations.
+ * Strictly validates that the data payload contains valid results before returning.
+ * Fails closed on malformed JSON, primitives, or invalid payload schema.
+ */
+export function normalizeStructuredData(
+  raw: unknown,
+  entryId: string,
+  maxSizeBytes: number = MAX_MCP_RESPONSE_SIZE_BYTES
+): McpNormalizedStructuredData {
+  const originalType =
+    raw === null ? 'null' : Array.isArray(raw) ? 'array' : typeof raw;
+
+  // Case A: raw is already a non-null object (not array)
+  if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
+    const validation = McpStructuredDataPayloadSchema.safeParse(raw);
+    if (!validation.success) {
+      logMcpDiag('structured_data_normalization', {
+        entryId,
+        originalType: 'object',
+        jsonParseSucceeded: true,
+        parsedType: 'object',
+        downstreamValidationSucceeded: false,
+      });
+      throw new DissentError(
+        'EXTERNAL_PROVIDER_ERROR',
+        `Provider Bitget MCP failed: Bitget MCP query ${entryId} structured data object does not satisfy provider payload schema`,
+        {
+          details: { kind: 'invalid_response', entryId },
+          retryable: false,
+        }
+      );
+    }
+
+    logMcpDiag('structured_data_normalization', {
+      entryId,
+      originalType: 'object',
+      jsonParseSucceeded: true,
+      parsedType: 'object',
+      downstreamValidationSucceeded: true,
+    });
+
+    return validation.data;
+  }
+
+  // Case B: raw is a string (production Bitget MCP representation)
+  if (typeof raw === 'string') {
+    const trimmed = raw.trim();
+    const stringLength = trimmed.length;
+
+    if (stringLength === 0 || stringLength > maxSizeBytes) {
+      logMcpDiag('structured_data_normalization', {
+        entryId,
+        originalType: 'string',
+        stringLength,
+        jsonParseSucceeded: false,
+        parsedType: stringLength === 0 ? 'empty' : 'oversized',
+        downstreamValidationSucceeded: false,
+      });
+      throw new DissentError(
+        'EXTERNAL_PROVIDER_ERROR',
+        `Provider Bitget MCP failed: Bitget MCP query ${entryId} structured data string is ${stringLength === 0 ? 'empty' : 'exceeds size limit'}`,
+        {
+          details: { kind: 'invalid_response', stringLength, entryId },
+          retryable: false,
+        }
+      );
+    }
+
+    let parsedJson: unknown;
+    try {
+      parsedJson = JSON.parse(trimmed);
+    } catch (err: unknown) {
+      logMcpDiag('structured_data_normalization', {
+        entryId,
+        originalType: 'string',
+        stringLength,
+        jsonParseSucceeded: false,
+        parsedType: 'unparseable',
+        downstreamValidationSucceeded: false,
+      });
+      throw new DissentError(
+        'EXTERNAL_PROVIDER_ERROR',
+        `Provider Bitget MCP failed: Bitget MCP query ${entryId} structured data string contains malformed JSON`,
+        {
+          details: {
+            kind: 'invalid_response',
+            error: err instanceof Error ? err.message : String(err),
+            entryId,
+          },
+          retryable: false,
+        }
+      );
+    }
+
+    const parsedType =
+      parsedJson === null
+        ? 'null'
+        : Array.isArray(parsedJson)
+          ? 'array'
+          : typeof parsedJson;
+
+    if (parsedType !== 'object') {
+      logMcpDiag('structured_data_normalization', {
+        entryId,
+        originalType: 'string',
+        stringLength,
+        jsonParseSucceeded: true,
+        parsedType,
+        downstreamValidationSucceeded: false,
+      });
+      throw new DissentError(
+        'EXTERNAL_PROVIDER_ERROR',
+        `Provider Bitget MCP failed: Bitget MCP query ${entryId} structured data parsed to unsupported primitive (${parsedType})`,
+        {
+          details: { kind: 'invalid_response', parsedType, entryId },
+          retryable: false,
+        }
+      );
+    }
+
+    const validation = McpStructuredDataPayloadSchema.safeParse(parsedJson);
+    if (!validation.success) {
+      logMcpDiag('structured_data_normalization', {
+        entryId,
+        originalType: 'string',
+        stringLength,
+        jsonParseSucceeded: true,
+        parsedType: 'object',
+        downstreamValidationSucceeded: false,
+      });
+      throw new DissentError(
+        'EXTERNAL_PROVIDER_ERROR',
+        `Provider Bitget MCP failed: Bitget MCP query ${entryId} structured data does not satisfy provider payload schema`,
+        {
+          details: { kind: 'invalid_response', entryId },
+          retryable: false,
+        }
+      );
+    }
+
+    logMcpDiag('structured_data_normalization', {
+      entryId,
+      originalType: 'string',
+      stringLength,
+      jsonParseSucceeded: true,
+      parsedType: 'object',
+      downstreamValidationSucceeded: true,
+    });
+
+    return validation.data;
+  }
+
+  // Case C: Missing, null, or unsupported type
+  logMcpDiag('structured_data_normalization', {
+    entryId,
+    originalType,
+    jsonParseSucceeded: false,
+    parsedType: 'invalid',
+    downstreamValidationSucceeded: false,
+  });
+  throw new DissentError(
+    'EXTERNAL_PROVIDER_ERROR',
+    `Provider Bitget MCP failed: Bitget MCP query ${entryId} missing or invalid structured data`,
+    {
+      details: { kind: 'invalid_response', originalType, entryId },
+      retryable: false,
+    }
+  );
 }
 
 /**
@@ -565,10 +744,13 @@ export class BitgetMcpClient {
       const text = await res.text();
       const isSse = text.includes('data: ');
       if (text.length > this.maxResponseSizeBytes) {
-        throw DissentError.externalProviderError(
-          'Bitget MCP',
-          `Bitget MCP response size exceeded limit for ${entryId}`,
-          { size: text.length, entryId }
+        throw new DissentError(
+          'EXTERNAL_PROVIDER_ERROR',
+          `Provider Bitget MCP failed: Bitget MCP response size exceeded limit for ${entryId}`,
+          {
+            details: { kind: 'invalid_response', size: text.length, entryId },
+            retryable: false,
+          }
         );
       }
 
@@ -615,10 +797,13 @@ export class BitgetMcpClient {
           entryId,
           error: 'missing structuredContent',
         });
-        throw DissentError.externalProviderError(
-          'Bitget MCP',
-          `Bitget MCP query ${entryId} missing structuredContent`,
-          { kind: 'invalid_response', result: envelope.result, entryId }
+        throw new DissentError(
+          'EXTERNAL_PROVIDER_ERROR',
+          `Provider Bitget MCP failed: Bitget MCP query ${entryId} missing structuredContent`,
+          {
+            details: { kind: 'invalid_response', result: envelope.result, entryId },
+            retryable: false,
+          }
         );
       }
 
@@ -649,9 +834,15 @@ export class BitgetMcpClient {
         );
       }
 
-      const resultCount = Array.isArray(struct.data?.results)
-        ? struct.data.results.length
-        : struct.data?.results !== undefined
+      const normalizedData = normalizeStructuredData(
+        struct.data,
+        entryId,
+        this.maxResponseSizeBytes
+      );
+
+      const resultCount = Array.isArray(normalizedData.results)
+        ? normalizedData.results.length
+        : normalizedData.results !== undefined
           ? 1
           : 0;
 
@@ -672,8 +863,8 @@ export class BitgetMcpClient {
       });
 
       return {
-        results: struct.data?.results as T,
-        provider: struct.data?.provider,
+        results: normalizedData.results as T,
+        provider: normalizedData.provider,
         sessionId: this.sessionId,
         retrievedAt,
       };
@@ -738,13 +929,16 @@ export class BitgetMcpClient {
         isSse,
         error: sanitizeProviderError(err instanceof Error ? err.message : String(err)),
       });
-      throw DissentError.externalProviderError(
-        'Bitget MCP',
-        'Failed to parse Bitget MCP JSON-RPC envelope',
+      throw new DissentError(
+        'EXTERNAL_PROVIDER_ERROR',
+        'Provider Bitget MCP failed: Failed to parse Bitget MCP JSON-RPC envelope',
         {
-          kind: 'invalid_response',
-          rawLength: rawText.length,
-          error: err instanceof Error ? err.message : String(err),
+          details: {
+            kind: 'invalid_response',
+            rawLength: rawText.length,
+            error: err instanceof Error ? err.message : String(err),
+          },
+          retryable: false,
         }
       );
     }

@@ -5,11 +5,13 @@ import {
   DEFAULT_MCP_PROTOCOL_VERSION,
   INIT_FAILURE_COOLDOWN_MS,
   SUPPORTED_MCP_PROTOCOL_VERSIONS,
+  normalizeStructuredData,
   sanitizeProviderError,
 } from '@/server/market/bitget-mcp.client';
 import {
   SANITY_MCP_INIT_RESPONSE,
   SANITY_MCP_QUOTE_RESPONSE,
+  SANITY_MCP_QUOTE_STRING_RESPONSE,
 } from '../../fixtures/bitget-mcp-nvda.fixtures';
 
 function okInitResponse() {
@@ -739,5 +741,256 @@ describe('BitgetMcpClient retry and cooldown behavior', () => {
     expect((secondErr as DissentError).code).toBe('EXTERNAL_PROVIDER_ERROR');
     expect((secondErr as DissentError).message).toContain('failed recently, skipping redundant retry');
     expect(fetchDuringCooldown).toBe(0);
+  });
+});
+
+describe('BitgetMcpClient structuredContent.data normalization & error semantics', () => {
+  it('TEST A — object representation remains supported', async () => {
+    const mockFetch = ((_: URL | RequestInfo, init?: RequestInit) => {
+      const bodyJson = JSON.parse(typeof init?.body === 'string' ? init.body : '{}');
+      if (bodyJson.method === 'initialize') return Promise.resolve(okInitResponse());
+      if (bodyJson.method === 'notifications/initialized') {
+        return Promise.resolve(new Response(null, { status: 200 }));
+      }
+      return Promise.resolve(okQueryResponse());
+    }) as typeof fetch;
+
+    const client = new BitgetMcpClient({ fetch: mockFetch, timeoutMs: 1000 });
+    const res = await client.executeQuery<unknown[]>('equity_price_quote', { symbol: 'NVDA' });
+    expect(res.results).toBeDefined();
+    expect(Array.isArray(res.results)).toBe(true);
+    expect(res.provider).toBe('bitget_data');
+  });
+
+  it('TEST B — JSON-string representation succeeds (exact production representation)', async () => {
+    const mockFetch = ((_: URL | RequestInfo, init?: RequestInit) => {
+      const bodyJson = JSON.parse(typeof init?.body === 'string' ? init.body : '{}');
+      if (bodyJson.method === 'initialize') return Promise.resolve(okInitResponse());
+      if (bodyJson.method === 'notifications/initialized') {
+        return Promise.resolve(new Response(null, { status: 200 }));
+      }
+      return Promise.resolve(
+        new Response(JSON.stringify(SANITY_MCP_QUOTE_STRING_RESPONSE), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      );
+    }) as typeof fetch;
+
+    const client = new BitgetMcpClient({ fetch: mockFetch, timeoutMs: 1000 });
+    const res = await client.executeQuery<unknown[]>('equity_price_quote', { symbol: 'NVDA' });
+    expect(res.results).toBeDefined();
+    expect(Array.isArray(res.results)).toBe(true);
+    expect((res.results as any[])[0].symbol).toBe('NVDA');
+    expect(res.provider).toBe('bitget_data');
+  });
+
+  it('TEST C — malformed JSON string fails closed', async () => {
+    const mockFetch = ((_: URL | RequestInfo, init?: RequestInit) => {
+      const bodyJson = JSON.parse(typeof init?.body === 'string' ? init.body : '{}');
+      if (bodyJson.method === 'initialize') return Promise.resolve(okInitResponse());
+      if (bodyJson.method === 'notifications/initialized') {
+        return Promise.resolve(new Response(null, { status: 200 }));
+      }
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({
+            jsonrpc: '2.0',
+            id: 2,
+            result: {
+              structuredContent: {
+                status_code: 200,
+                success: true,
+                data: '{ not valid json syntax ...',
+              },
+            },
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } }
+        )
+      );
+    }) as typeof fetch;
+
+    const client = new BitgetMcpClient({ fetch: mockFetch, timeoutMs: 1000, retryDelayMs: 0 });
+    await expect(
+      client.executeQuery('equity_price_quote', { symbol: 'NVDA' })
+    ).rejects.toMatchObject({
+      code: 'EXTERNAL_PROVIDER_ERROR',
+      message: expect.stringContaining('malformed JSON'),
+    });
+  });
+
+  it('TEST D — JSON string containing primitive fails closed', async () => {
+    for (const primitive of ['"hello"', '123', 'null', 'true']) {
+      const mockFetch = ((_: URL | RequestInfo, init?: RequestInit) => {
+        const bodyJson = JSON.parse(typeof init?.body === 'string' ? init.body : '{}');
+        if (bodyJson.method === 'initialize') return Promise.resolve(okInitResponse());
+        if (bodyJson.method === 'notifications/initialized') {
+          return Promise.resolve(new Response(null, { status: 200 }));
+        }
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              jsonrpc: '2.0',
+              id: 2,
+              result: {
+                structuredContent: {
+                  status_code: 200,
+                  success: true,
+                  data: primitive,
+                },
+              },
+            }),
+            { status: 200, headers: { 'Content-Type': 'application/json' } }
+          )
+        );
+      }) as typeof fetch;
+
+      const client = new BitgetMcpClient({ fetch: mockFetch, timeoutMs: 1000, retryDelayMs: 0 });
+      await expect(
+        client.executeQuery('equity_price_quote', { symbol: 'NVDA' })
+      ).rejects.toMatchObject({
+        code: 'EXTERNAL_PROVIDER_ERROR',
+        message: expect.stringContaining('unsupported primitive'),
+      });
+    }
+  });
+
+  it('TEST E — syntactically valid JSON but invalid provider schema fails closed', async () => {
+    // Missing 'results' property
+    const mockFetch = ((_: URL | RequestInfo, init?: RequestInit) => {
+      const bodyJson = JSON.parse(typeof init?.body === 'string' ? init.body : '{}');
+      if (bodyJson.method === 'initialize') return Promise.resolve(okInitResponse());
+      if (bodyJson.method === 'notifications/initialized') {
+        return Promise.resolve(new Response(null, { status: 200 }));
+      }
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({
+            jsonrpc: '2.0',
+            id: 2,
+            result: {
+              structuredContent: {
+                status_code: 200,
+                success: true,
+                data: JSON.stringify({ unexpected_property: 123 }),
+              },
+            },
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } }
+        )
+      );
+    }) as typeof fetch;
+
+    const client = new BitgetMcpClient({ fetch: mockFetch, timeoutMs: 1000, retryDelayMs: 0 });
+    await expect(
+      client.executeQuery('equity_price_quote', { symbol: 'NVDA' })
+    ).rejects.toMatchObject({
+      code: 'EXTERNAL_PROVIDER_ERROR',
+      message: expect.stringContaining('does not satisfy provider payload schema'),
+    });
+  });
+
+  it('TEST F — tool-level error represented alongside string data remains an error', async () => {
+    const mockFetch = ((_: URL | RequestInfo, init?: RequestInit) => {
+      const bodyJson = JSON.parse(typeof init?.body === 'string' ? init.body : '{}');
+      if (bodyJson.method === 'initialize') return Promise.resolve(okInitResponse());
+      if (bodyJson.method === 'notifications/initialized') {
+        return Promise.resolve(new Response(null, { status: 200 }));
+      }
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({
+            jsonrpc: '2.0',
+            id: 2,
+            result: {
+              structuredContent: {
+                status_code: 500,
+                success: false,
+                error: 'Internal calculation error in upstream engine',
+                data: JSON.stringify({ provider: 'bitget_data', results: [] }),
+              },
+            },
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } }
+        )
+      );
+    }) as typeof fetch;
+
+    const client = new BitgetMcpClient({ fetch: mockFetch, timeoutMs: 1000, retryDelayMs: 0 });
+    await expect(
+      client.executeQuery('equity_price_quote', { symbol: 'NVDA' })
+    ).rejects.toMatchObject({
+      code: 'EXTERNAL_PROVIDER_ERROR',
+      message: expect.stringContaining('failed with status 500'),
+    });
+  });
+
+  it('TEST G — deterministic parser/schema errors are not retried', async () => {
+    let queryAttempts = 0;
+    const mockFetch = ((_: URL | RequestInfo, init?: RequestInit) => {
+      const bodyJson = JSON.parse(typeof init?.body === 'string' ? init.body : '{}');
+      if (bodyJson.method === 'initialize') return Promise.resolve(okInitResponse());
+      if (bodyJson.method === 'notifications/initialized') {
+        return Promise.resolve(new Response(null, { status: 200 }));
+      }
+      if (bodyJson.method === 'tools/call') {
+        queryAttempts++;
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              jsonrpc: '2.0',
+              id: 2,
+              result: {
+                structuredContent: {
+                  status_code: 200,
+                  success: true,
+                  data: '{ invalid json syntax',
+                },
+              },
+            }),
+            { status: 200, headers: { 'Content-Type': 'application/json' } }
+          )
+        );
+      }
+      return Promise.resolve(new Response(null, { status: 404 }));
+    }) as typeof fetch;
+
+    const client = new BitgetMcpClient({ fetch: mockFetch, timeoutMs: 1000, retryDelayMs: 0 });
+    await expect(
+      client.executeQuery('equity_price_quote', { symbol: 'NVDA' })
+    ).rejects.toThrow();
+
+    // Must NOT retry deterministic parsing failure
+    expect(queryAttempts).toBe(1);
+  });
+
+  it('TEST H — timeout / transient transport failure remains retryable', async () => {
+    let queryAttempts = 0;
+    const mockFetch = ((_: URL | RequestInfo, init?: RequestInit) => {
+      const bodyJson = JSON.parse(typeof init?.body === 'string' ? init.body : '{}');
+      if (bodyJson.method === 'initialize') return Promise.resolve(okInitResponse());
+      if (bodyJson.method === 'notifications/initialized') {
+        return Promise.resolve(new Response(null, { status: 200 }));
+      }
+      if (bodyJson.method === 'tools/call') {
+        queryAttempts++;
+        if (queryAttempts === 1) {
+          // Attempt 0 fails with transient abort
+          return new Promise<Response>((_, reject) => {
+            reject(new DOMException('Query timed out', 'AbortError'));
+          });
+        }
+        // Attempt 1 succeeds
+        return Promise.resolve(okQueryResponse());
+      }
+      return Promise.resolve(new Response(null, { status: 404 }));
+    }) as typeof fetch;
+
+    const client = new BitgetMcpClient({ fetch: mockFetch, timeoutMs: 1000, retryDelayMs: 0 });
+    const res = await client.executeQuery('equity_price_quote', { symbol: 'NVDA' });
+
+    expect(res.results).toBeDefined();
+    // Transient error was genuinely retried
+    expect(queryAttempts).toBe(2);
   });
 });

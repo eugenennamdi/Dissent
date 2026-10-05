@@ -11,8 +11,10 @@ import {
   SANITY_MCP_PARTIAL_RATIOS_RESPONSE,
   SANITY_MCP_QUOTE_RECORD,
   SANITY_MCP_QUOTE_RESPONSE,
+  SANITY_MCP_QUOTE_STRING_RESPONSE,
   SANITY_MCP_RATIOS_RECORD,
   SANITY_MCP_RATIOS_RESPONSE,
+  SANITY_MCP_RATIOS_STRING_RESPONSE,
   SANITY_MCP_TOOL_ERROR_RESPONSE,
 } from '../../fixtures/bitget-mcp-nvda.fixtures';
 import {
@@ -573,6 +575,39 @@ describe('Bitget Equity MCP Adapter (Offline Unit Tests)', () => {
       ).rejects.toMatchObject({
         code: 'UNSUPPORTED_MARKET',
       });
+    });
+
+    it('TEST I — quote and fundamental adapter fixtures both support current string representation', async () => {
+      const fetchImpl = mockMcpFetch({
+        quote: SANITY_MCP_QUOTE_STRING_RESPONSE,
+        ratios: SANITY_MCP_RATIOS_STRING_RESPONSE,
+      });
+      const adapter = new BitgetEquityAdapter({
+        fetch: fetchImpl,
+        now: () => NOW,
+      });
+
+      const thesis = createNvdaThesis('LONG');
+      const result = await adapter.gatherMarketObservations(thesis);
+
+      expect(result.complete).toBe(true);
+      expect(result.gaps).toHaveLength(0);
+      expect(result.ledger.items.length).toBeGreaterThan(0);
+      assertEvidenceLedgerIntegrity(result.ledger);
+
+      const hasPrice = result.ledger.items.some(
+        (i) => i.observation.type === 'LAST_PRICE'
+      );
+      const hasChange = result.ledger.items.some(
+        (i) => i.observation.type === 'SESSION_PRICE_CHANGE'
+      );
+      const hasPeTtm = result.ledger.items.some(
+        (i) => i.observation.type === 'VALUATION_PE_TTM'
+      );
+
+      expect(hasPrice).toBe(true);
+      expect(hasChange).toBe(true);
+      expect(hasPeTtm).toBe(true);
     });
   });
 });

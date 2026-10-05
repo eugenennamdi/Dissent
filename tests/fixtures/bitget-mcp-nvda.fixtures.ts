@@ -125,3 +125,33 @@ export const SANITY_MCP_JSONRPC_ERROR_RESPONSE = {
     message: 'Method not found',
   },
 };
+
+export const SANITY_MCP_QUOTE_STRING_RESPONSE = {
+  jsonrpc: '2.0',
+  id: 2,
+  result: {
+    structuredContent: {
+      status_code: 200,
+      success: true,
+      data: JSON.stringify({
+        provider: 'bitget_data',
+        results: [SANITY_MCP_QUOTE_RECORD],
+      }),
+    },
+  },
+};
+
+export const SANITY_MCP_RATIOS_STRING_RESPONSE = {
+  jsonrpc: '2.0',
+  id: 3,
+  result: {
+    structuredContent: {
+      status_code: 200,
+      success: true,
+      data: JSON.stringify({
+        provider: 'bitget_data',
+        results: [SANITY_MCP_RATIOS_RECORD],
+      }),
+    },
+  },
+};
