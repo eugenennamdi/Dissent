@@ -67,6 +67,15 @@ function mockMcpFetch(responses: {
       });
     }
 
+    if (method === 'notifications/initialized') {
+      return new Response(null, {
+        status: 200,
+        headers: {
+          'mcp-session-id': 'test-session-12345',
+        },
+      });
+    }
+
     if (method === 'tools/call') {
       const entryId = bodyJson.params?.arguments?.entry_id;
       let payload: unknown;
@@ -327,6 +336,15 @@ describe('Bitget Equity MCP Adapter (Offline Unit Tests)', () => {
             status: 200,
             headers: {
               'Content-Type': 'application/json',
+              'mcp-session-id': 'test-session-multi',
+            },
+          });
+        }
+
+        if (method === 'notifications/initialized') {
+          return new Response(null, {
+            status: 200,
+            headers: {
               'mcp-session-id': 'test-session-multi',
             },
           });

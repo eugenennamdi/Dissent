@@ -24,6 +24,7 @@ export const McpResponseEnvelopeSchema = z.object({
   id: z.union([z.string(), z.number()]).optional(),
   result: z
     .object({
+      protocolVersion: z.string().optional(),
       structuredContent: McpStructuredContentSchema.optional(),
       content: z.array(z.unknown()).optional(),
     })

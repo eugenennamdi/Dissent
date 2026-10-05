@@ -22,7 +22,11 @@ import {
   type BitgetEquityFundamentalRatioRecord,
   type BitgetEquityQuoteRecord,
 } from './bitget-mcp.schemas';
-import { BitgetMcpClient } from './bitget-mcp.client';
+import {
+  BitgetMcpClient,
+  logMcpDiag,
+  sanitizeProviderError,
+} from './bitget-mcp.client';
 import {
   assembleEvidenceLedger,
   createEvidenceId,
@@ -95,7 +99,15 @@ export class BitgetEquityAdapter implements MarketDeskPort {
       const quoteItems = await this.collectEquityQuote(thesis.id, market, symbol);
       items.push(...quoteItems);
     } catch (error: unknown) {
-      gaps.push(this.toGap(market, 'EQUITY_QUOTE', error));
+      const gap = this.toGap(market, 'EQUITY_QUOTE', error);
+      logMcpDiag('evidence_gap_created', {
+        market,
+        dimension: gap.dimension,
+        reason: gap.reason,
+        errorCode: error instanceof DissentError ? error.code : undefined,
+        errorMessage: sanitizeProviderError(gap.message),
+      });
+      gaps.push(gap);
     }
 
     // Query 2: equity_fundamental_ratios
@@ -103,7 +115,15 @@ export class BitgetEquityAdapter implements MarketDeskPort {
       const valuationItems = await this.collectEquityValuation(thesis.id, market, symbol);
       items.push(...valuationItems);
     } catch (error: unknown) {
-      gaps.push(this.toGap(market, 'EQUITY_VALUATION', error));
+      const gap = this.toGap(market, 'EQUITY_VALUATION', error);
+      logMcpDiag('evidence_gap_created', {
+        market,
+        dimension: gap.dimension,
+        reason: gap.reason,
+        errorCode: error instanceof DissentError ? error.code : undefined,
+        errorMessage: sanitizeProviderError(gap.message),
+      });
+      gaps.push(gap);
     }
 
     const assembledAt = this.now().toISOString();
@@ -114,6 +134,15 @@ export class BitgetEquityAdapter implements MarketDeskPort {
       gaps.length === 0 &&
       items.some((i) => i.observation.type === 'LAST_PRICE') &&
       items.some((i) => i.observation.type === 'SESSION_PRICE_CHANGE');
+
+    logMcpDiag('research_completeness_result', {
+      market,
+      complete,
+      gapsCount: gaps.length,
+      evidenceCount: items.length,
+      hasLastPrice: items.some((i) => i.observation.type === 'LAST_PRICE'),
+      hasSessionPriceChange: items.some((i) => i.observation.type === 'SESSION_PRICE_CHANGE'),
+    });
 
     return {
       ledger,
@@ -132,6 +161,14 @@ export class BitgetEquityAdapter implements MarketDeskPort {
     });
 
     if (!Array.isArray(queryResult.results) || queryResult.results.length === 0) {
+      logMcpDiag('parser_validation_failure', {
+        stage: 'results_array',
+        entryId: 'equity_price_quote',
+        symbol,
+        error: 'empty or non-array results',
+        isArray: Array.isArray(queryResult.results),
+        length: Array.isArray(queryResult.results) ? queryResult.results.length : 0,
+      });
       throw DissentError.evidenceUnavailable(`equity_price_quote ${symbol}`, {
         reason: 'Provider returned empty quote results array',
       });
@@ -141,6 +178,12 @@ export class BitgetEquityAdapter implements MarketDeskPort {
     try {
       parsedQuote = BitgetEquityQuoteRecordSchema.parse(queryResult.results[0]);
     } catch (err: unknown) {
+      logMcpDiag('parser_validation_failure', {
+        stage: 'schema_parse',
+        entryId: 'equity_price_quote',
+        symbol,
+        error: sanitizeProviderError(err instanceof Error ? err.message : String(err)),
+      });
       throw DissentError.externalProviderError(
         'Bitget MCP',
         `Malformed equity quote record for ${symbol}`,
@@ -259,6 +302,14 @@ export class BitgetEquityAdapter implements MarketDeskPort {
     );
 
     if (!Array.isArray(queryResult.results) || queryResult.results.length === 0) {
+      logMcpDiag('parser_validation_failure', {
+        stage: 'results_array',
+        entryId: 'equity_fundamental_ratios',
+        symbol,
+        error: 'empty or non-array results',
+        isArray: Array.isArray(queryResult.results),
+        length: Array.isArray(queryResult.results) ? queryResult.results.length : 0,
+      });
       throw DissentError.evidenceUnavailable(`equity_fundamental_ratios ${symbol}`, {
         reason: 'Provider returned empty fundamental ratios array',
       });
@@ -268,6 +319,12 @@ export class BitgetEquityAdapter implements MarketDeskPort {
     try {
       parsedRecord = BitgetEquityFundamentalRatioRecordSchema.parse(queryResult.results[0]);
     } catch (err: unknown) {
+      logMcpDiag('parser_validation_failure', {
+        stage: 'schema_parse',
+        entryId: 'equity_fundamental_ratios',
+        symbol,
+        error: sanitizeProviderError(err instanceof Error ? err.message : String(err)),
+      });
       throw DissentError.externalProviderError(
         'Bitget MCP',
         `Malformed fundamental ratio record for ${symbol}`,
@@ -404,6 +461,12 @@ export class BitgetEquityAdapter implements MarketDeskPort {
     }
 
     if (items.length === 0) {
+      logMcpDiag('parser_validation_failure', {
+        stage: 'valuation_multiples',
+        entryId: 'equity_fundamental_ratios',
+        symbol,
+        error: 'no valid recognizable valuation multiples found in record',
+      });
       throw DissentError.evidenceUnavailable(`equity_fundamental_ratios ${symbol}`, {
         reason: 'Fundamental record contained no valid recognizable valuation multiples',
       });

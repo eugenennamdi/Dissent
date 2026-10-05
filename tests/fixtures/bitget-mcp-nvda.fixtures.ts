@@ -2,7 +2,7 @@ export const SANITY_MCP_INIT_RESPONSE = {
   jsonrpc: '2.0',
   id: 1,
   result: {
-    protocolVersion: '2024-11-05',
+    protocolVersion: '2025-03-26',
     capabilities: { tools: {} },
     serverInfo: { name: 'bitget-mcp-server', version: '4.0.5' },
   },

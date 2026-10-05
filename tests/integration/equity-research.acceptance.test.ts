@@ -40,6 +40,15 @@ function mockMcpFetch(responses: {
       });
     }
 
+    if (method === 'notifications/initialized') {
+      return new Response(null, {
+        status: 200,
+        headers: {
+          'mcp-session-id': 'test-session-equity-acceptance',
+        },
+      });
+    }
+
     if (method === 'tools/call') {
       const entryId = bodyJson.params?.arguments?.entry_id;
       let payload: unknown;
@@ -649,6 +658,15 @@ describe('NVDA US-Equity Research Integration Acceptance', () => {
             status: 200,
             headers: {
               'Content-Type': 'application/json',
+              'mcp-session-id': 'test-session-multi-acc',
+            },
+          });
+        }
+
+        if (method === 'notifications/initialized') {
+          return new Response(null, {
+            status: 200,
+            headers: {
               'mcp-session-id': 'test-session-multi-acc',
             },
           });
