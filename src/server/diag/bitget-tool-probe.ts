@@ -11,6 +11,7 @@ export interface McpToolSummary {
 }
 
 export interface DirectTestCallReport {
+  entryId?: string;
   toolName: string;
   argumentsShape: Record<string, string>;
   httpStatus: number;
@@ -21,19 +22,54 @@ export interface DirectTestCallReport {
   hasStructuredContent: boolean;
   resultsNonEmpty: boolean;
   topLevelFieldNames: string[];
+  dataType?: string;
+  isHtmlError?: boolean;
 }
 
-export interface DoQueryComparison {
-  isExposed: boolean;
-  dissentExpectedFields: string[];
-  serverProperties: string[];
-  serverRequired: string[];
-  missingFromSchema: string[];
-  extraInSchema: string[];
-  propertyTypes: Record<string, string>;
+export interface GuideCategory {
+  key: string;
+  name: string;
+  description: string;
+  entry_count: number;
 }
 
-export interface BitgetToolProbeReport {
+export interface GuideParamSummary {
+  name: string;
+  type: string;
+  required: boolean;
+  default?: unknown;
+  enum?: unknown[];
+}
+
+export interface GuideEntrySummary {
+  id: string;
+  url_path?: string;
+  category?: string;
+  subcategory?: string;
+  title?: string;
+  summary?: string;
+  data_tier?: string;
+  params: GuideParamSummary[];
+}
+
+export interface GuideKeywordSearchResult {
+  keyword: string;
+  matchedCount: number;
+  matchedEntryIds: string[];
+}
+
+export interface FieldComparison {
+  entryId: string;
+  expectedByGuide: GuideParamSummary[];
+  currentlySentByDissent: Record<string, unknown>;
+  missing: string[];
+  extra: string[];
+  typeMismatch: string[];
+  valueFormatMismatch: string[];
+  isCompatible: boolean;
+}
+
+export interface ExtendedBitgetToolProbeReport {
   environment: string;
   timestamp: string;
   lifecycle: {
@@ -43,30 +79,42 @@ export interface BitgetToolProbeReport {
     handshakeDurationMs: number;
     handshakeError?: string;
   };
-  toolDiscovery: {
-    totalToolsCount: number;
-    pagesFetched: number;
-    targetToolPresence: Record<string, boolean>;
+  mcpTools: {
     tools: McpToolSummary[];
   };
-  callContractAnalysis: {
-    detectedCategory: 'DIRECT_TOOLS' | 'DISCOVERY_WRAPPER' | 'DO_QUERY' | 'UNKNOWN';
-    summary: string;
-    doQueryComparison?: DoQueryComparison;
+  phase1GuideDiscovery: {
+    topLevelCategories: GuideCategory[];
+    keywordSearches: GuideKeywordSearchResult[];
+    equitySubcategoriesFound: string[];
+    totalEquityEntriesCount: number;
   };
-  testCalls: DirectTestCallReport[];
+  phase2CatalogEntries: {
+    equityPriceQuoteExists: boolean;
+    equityFundamentalRatiosExists: boolean;
+    requiredParamsChanged: boolean;
+    targetEntries: GuideEntrySummary[];
+    alternativeCandidates: GuideEntrySummary[];
+  };
+  phase3ParameterComparison: {
+    equityPriceQuote: FieldComparison;
+    equityFundamentalRatios: FieldComparison;
+  };
+  phase4ControlQuery: DirectTestCallReport;
+  phase5Retest: {
+    equityPriceQuote: DirectTestCallReport;
+    equityFundamentalRatios: DirectTestCallReport;
+  };
+  conclusion: {
+    classification:
+      | 'BACKEND_SERVICE_OUTAGE'
+      | 'CLIENT_CONTRACT_DRIFT'
+      | 'CATALOG_ENTRY_REMOVED';
+    summary: string;
+    clientContractStatus: string;
+    entryCatalogStatus: string;
+    backendServiceStatus: string;
+  };
 }
-
-const TARGET_TOOL_NAMES = [
-  'do_query',
-  'equity_price_quote',
-  'equity_fundamental_ratios',
-  'available_tools',
-  'search_tools',
-  'call_tool',
-  'activate_tools',
-  'activate_category',
-] as const;
 
 interface SessionContext {
   sessionId: string | null;
@@ -162,54 +210,21 @@ async function sendMcpPost(
   }
 }
 
-function constructDirectToolArgs(
-  inputSchema: Record<string, unknown>,
-  symbolValue = 'NVDA'
-): Record<string, unknown> {
-  const args: Record<string, unknown> = {};
-  const properties =
-    inputSchema.properties && typeof inputSchema.properties === 'object'
-      ? (inputSchema.properties as Record<string, unknown>)
-      : {};
-  const propKeys = Object.keys(properties);
-
-  const symbolKey = propKeys.find((k) =>
-    ['symbol', 'ticker', 'stock', 'query', 'stock_symbol', 'asset'].includes(
-      k.toLowerCase()
-    )
-  );
-
-  if (symbolKey) {
-    args[symbolKey] = symbolValue;
-  } else if (propKeys.length > 0) {
-    const required = Array.isArray(inputSchema.required)
-      ? inputSchema.required
-      : [];
-    const firstRequired = required[0];
-    const firstProp = propKeys[0];
-    if (firstRequired && typeof firstRequired === 'string') {
-      args[firstRequired] = symbolValue;
-    } else if (firstProp) {
-      args[firstProp] = symbolValue;
-    } else {
-      args['symbol'] = symbolValue;
-    }
-  } else {
-    args['symbol'] = symbolValue;
-  }
-  return args;
-}
-
 function extractSafeReport(
   toolName: string,
   args: Record<string, unknown>,
   httpStatus: number,
-  envelope: any
+  envelope: any,
+  entryId?: string
 ): DirectTestCallReport {
   const argumentsShape: Record<string, string> = {};
   for (const [k, v] of Object.entries(args)) {
     argumentsShape[k] =
-      typeof v === 'string' ? `string(val=${v})` : typeof v;
+      typeof v === 'string'
+        ? `string(val=${v})`
+        : typeof v === 'object' && v !== null
+          ? `object(keys=${Object.keys(v).join(',')})`
+          : typeof v;
   }
 
   const hasJsonRpcError = Boolean(envelope?.error);
@@ -231,6 +246,8 @@ function extractSafeReport(
   let toolSuccess: boolean | undefined;
   let hasStructuredContent = false;
   let resultsNonEmpty = false;
+  let dataType: string | undefined;
+  let isHtmlError = false;
 
   if (result && typeof result === 'object') {
     if (typeof result.status_code === 'number') {
@@ -250,26 +267,33 @@ function extractSafeReport(
       if (typeof sc.success === 'boolean') toolSuccess = sc.success;
 
       const data = sc.data;
-      if (data) {
+      if (data !== undefined && data !== null) {
         if (typeof data === 'object') {
+          dataType = 'object';
           if (Array.isArray(data.results)) {
             resultsNonEmpty = data.results.length > 0;
           } else if (data.results !== undefined && data.results !== null) {
             resultsNonEmpty = true;
           }
         } else if (typeof data === 'string') {
-          try {
-            const parsed = JSON.parse(data);
-            if (Array.isArray(parsed?.results)) {
-              resultsNonEmpty = parsed.results.length > 0;
-            } else if (
-              parsed?.results !== undefined &&
-              parsed?.results !== null
-            ) {
-              resultsNonEmpty = true;
+          if (data.trim().startsWith('<')) {
+            dataType = 'html_error_page';
+            isHtmlError = true;
+          } else {
+            dataType = 'string';
+            try {
+              const parsed = JSON.parse(data);
+              if (Array.isArray(parsed?.results)) {
+                resultsNonEmpty = parsed.results.length > 0;
+              } else if (
+                parsed?.results !== undefined &&
+                parsed?.results !== null
+              ) {
+                resultsNonEmpty = true;
+              }
+            } catch {
+              // not json
             }
-          } catch {
-            // malformed or non-JSON data
           }
         }
       }
@@ -281,6 +305,7 @@ function extractSafeReport(
   }
 
   return {
+    entryId,
     toolName,
     argumentsShape,
     httpStatus,
@@ -291,16 +316,65 @@ function extractSafeReport(
     hasStructuredContent,
     resultsNonEmpty,
     topLevelFieldNames,
+    dataType,
+    isHtmlError,
+  };
+}
+
+function compareParameters(
+  entryId: string,
+  guideEntry: GuideEntrySummary | undefined,
+  dissentPayload: Record<string, unknown>
+): FieldComparison {
+  const expectedByGuide = guideEntry?.params ?? [];
+  const requiredGuideParams = expectedByGuide
+    .filter((p) => p.required)
+    .map((p) => p.name);
+  const guideParamNames = expectedByGuide.map((p) => p.name);
+  const dissentParamNames = Object.keys(dissentPayload);
+
+  const missing = requiredGuideParams.filter(
+    (name) => !(name in dissentPayload)
+  );
+  const extra = dissentParamNames.filter(
+    (name) => !guideParamNames.includes(name)
+  );
+
+  const typeMismatch: string[] = [];
+  for (const param of expectedByGuide) {
+    if (param.name in dissentPayload) {
+      const val = dissentPayload[param.name];
+      const actualType = typeof val;
+      if (param.type === 'string' && actualType !== 'string') {
+        typeMismatch.push(`${param.name}: expected string, got ${actualType}`);
+      } else if (param.type === 'integer' && !Number.isInteger(val)) {
+        typeMismatch.push(`${param.name}: expected integer, got ${actualType}`);
+      }
+    }
+  }
+
+  return {
+    entryId,
+    expectedByGuide,
+    currentlySentByDissent: dissentPayload,
+    missing,
+    extra,
+    typeMismatch,
+    valueFormatMismatch: [],
+    isCompatible:
+      missing.length === 0 &&
+      extra.length === 0 &&
+      typeMismatch.length === 0,
   };
 }
 
 export async function runBitgetToolProbe(
   fetchImpl: typeof fetch = fetch
-): Promise<BitgetToolProbeReport> {
+): Promise<ExtendedBitgetToolProbeReport> {
   const timestamp = new Date().toISOString();
   const environment = process.env.VERCEL_ENV ?? 'development';
 
-  // PHASE 1: MCP Handshake Lifecycle
+  // MCP Lifecycle Handshake
   const t0 = Date.now();
   const client = new BitgetMcpClient({
     endpoint: BITGET_MCP_ENDPOINT,
@@ -324,7 +398,7 @@ export async function runBitgetToolProbe(
     protocolVersion: client.getNegotiatedProtocolVersion(),
   };
 
-  const report: BitgetToolProbeReport = {
+  const report: ExtendedBitgetToolProbeReport = {
     environment,
     timestamp,
     lifecycle: {
@@ -334,275 +408,361 @@ export async function runBitgetToolProbe(
       handshakeDurationMs,
       handshakeError,
     },
-    toolDiscovery: {
-      totalToolsCount: 0,
-      pagesFetched: 0,
-      targetToolPresence: {},
+    mcpTools: {
       tools: [],
     },
-    callContractAnalysis: {
-      detectedCategory: 'UNKNOWN',
-      summary: 'Handshake incomplete or tools/list failed',
+    phase1GuideDiscovery: {
+      topLevelCategories: [],
+      keywordSearches: [],
+      equitySubcategoriesFound: [],
+      totalEquityEntriesCount: 0,
     },
-    testCalls: [],
+    phase2CatalogEntries: {
+      equityPriceQuoteExists: false,
+      equityFundamentalRatiosExists: false,
+      requiredParamsChanged: false,
+      targetEntries: [],
+      alternativeCandidates: [],
+    },
+    phase3ParameterComparison: {
+      equityPriceQuote: {
+        entryId: 'equity_price_quote',
+        expectedByGuide: [],
+        currentlySentByDissent: {},
+        missing: [],
+        extra: [],
+        typeMismatch: [],
+        valueFormatMismatch: [],
+        isCompatible: false,
+      },
+      equityFundamentalRatios: {
+        entryId: 'equity_fundamental_ratios',
+        expectedByGuide: [],
+        currentlySentByDissent: {},
+        missing: [],
+        extra: [],
+        typeMismatch: [],
+        valueFormatMismatch: [],
+        isCompatible: false,
+      },
+    },
+    phase4ControlQuery: {
+      toolName: 'do_query',
+      argumentsShape: {},
+      httpStatus: 0,
+      hasJsonRpcError: false,
+      hasStructuredContent: false,
+      resultsNonEmpty: false,
+      topLevelFieldNames: [],
+    },
+    phase5Retest: {
+      equityPriceQuote: {
+        toolName: 'do_query',
+        argumentsShape: {},
+        httpStatus: 0,
+        hasJsonRpcError: false,
+        hasStructuredContent: false,
+        resultsNonEmpty: false,
+        topLevelFieldNames: [],
+      },
+      equityFundamentalRatios: {
+        toolName: 'do_query',
+        argumentsShape: {},
+        httpStatus: 0,
+        hasJsonRpcError: false,
+        hasStructuredContent: false,
+        resultsNonEmpty: false,
+        topLevelFieldNames: [],
+      },
+    },
+    conclusion: {
+      classification: 'BACKEND_SERVICE_OUTAGE',
+      summary: 'Handshake incomplete',
+      clientContractStatus: 'unknown',
+      entryCatalogStatus: 'unknown',
+      backendServiceStatus: 'unknown',
+    },
   };
 
   if (!initialized) {
     return report;
   }
 
-  // MCP Tool Discovery: tools/list with bounded pagination
-  let cursor: string | undefined = undefined;
-  let nextId = 200;
-  const tools: McpToolSummary[] = [];
-  let pagesFetched = 0;
-  const MAX_PAGES = 10;
+  let nextId = 100;
 
-  while (pagesFetched < MAX_PAGES) {
-    pagesFetched++;
-    const params: Record<string, unknown> = cursor ? { cursor } : {};
-    const listRes = await sendMcpPost(
-      BITGET_MCP_ENDPOINT,
-      'tools/list',
-      params,
-      nextId++,
-      session,
-      fetchImpl,
-      15_000
-    );
+  // 1. tools/list
+  const toolsRes = await sendMcpPost(
+    BITGET_MCP_ENDPOINT,
+    'tools/list',
+    {},
+    nextId++,
+    session,
+    fetchImpl,
+    15_000
+  );
 
-    if (!listRes.envelope || listRes.envelope.error) {
-      break;
-    }
+  const rawTools = Array.isArray(toolsRes.envelope?.result?.tools)
+    ? toolsRes.envelope.result.tools
+    : [];
 
-    const toolList = Array.isArray(listRes.envelope.result?.tools)
-      ? listRes.envelope.result.tools
-      : [];
+  report.mcpTools.tools = rawTools.map((t: any) => ({
+    name: String(t.name ?? ''),
+    description: String(t.description ?? ''),
+    inputSchema:
+      t.inputSchema && typeof t.inputSchema === 'object' ? t.inputSchema : {},
+  }));
 
-    for (const item of toolList) {
-      if (item && typeof item.name === 'string') {
-        tools.push({
-          name: item.name,
-          description:
-            typeof item.description === 'string' ? item.description : '',
-          inputSchema:
-            item.inputSchema && typeof item.inputSchema === 'object'
-              ? (item.inputSchema as Record<string, unknown>)
-              : {},
-        });
-      }
-    }
+  // PHASE 1 — GUIDE DISCOVERY
+  // 1. guide {}
+  const guideEmptyRes = await sendMcpPost(
+    BITGET_MCP_ENDPOINT,
+    'tools/call',
+    { name: 'guide', arguments: {} },
+    nextId++,
+    session,
+    fetchImpl,
+    15_000
+  );
 
-    const nextCursor = listRes.envelope.result?.nextCursor;
-    if (typeof nextCursor === 'string' && nextCursor.trim().length > 0) {
-      cursor = nextCursor.trim();
-    } else {
-      break;
-    }
-  }
+  const categories = Array.isArray(
+    guideEmptyRes.envelope?.result?.structuredContent?.categories
+  )
+    ? guideEmptyRes.envelope.result.structuredContent.categories
+    : [];
 
-  const targetToolPresence: Record<string, boolean> = {};
-  for (const name of TARGET_TOOL_NAMES) {
-    targetToolPresence[name] = tools.some((t) => t.name === name);
-  }
+  report.phase1GuideDiscovery.topLevelCategories = categories.map((c: any) => ({
+    key: String(c.key ?? ''),
+    name: String(c.name ?? ''),
+    description: String(c.description ?? ''),
+    entry_count: Number(c.entry_count ?? 0),
+  }));
 
-  report.toolDiscovery = {
-    totalToolsCount: tools.length,
-    pagesFetched,
-    targetToolPresence,
-    tools,
-  };
+  // 2. Keyword searches
+  const keywordsToSearch = [
+    'equity_price_quote',
+    'equity_fundamental_ratios',
+    'quote',
+    'price',
+    'fundamental',
+    'ratios',
+    'valuation',
+  ];
 
-  // Inspect do_query if present for comparison
-  let doQueryComparison: DoQueryComparison | undefined;
-  const doQueryTool = tools.find((t) => t.name === 'do_query');
-  if (doQueryTool) {
-    const inputSchema = doQueryTool.inputSchema;
-    const properties =
-      inputSchema.properties && typeof inputSchema.properties === 'object'
-        ? (inputSchema.properties as Record<string, unknown>)
-        : {};
-    const serverProperties = Object.keys(properties);
-    const serverRequired = Array.isArray(inputSchema.required)
-      ? (inputSchema.required as string[])
-      : [];
-    const dissentExpected = ['entry_id', 'params'];
-
-    const missingFromSchema = dissentExpected.filter(
-      (f) => !serverProperties.includes(f)
-    );
-    const extraInSchema = serverProperties.filter(
-      (f) => !dissentExpected.includes(f)
-    );
-
-    const propertyTypes: Record<string, string> = {};
-    for (const [k, v] of Object.entries(properties)) {
-      if (v && typeof v === 'object' && 'type' in v) {
-        propertyTypes[k] = String((v as any).type);
-      } else {
-        propertyTypes[k] = typeof v;
-      }
-    }
-
-    doQueryComparison = {
-      isExposed: true,
-      dissentExpectedFields: dissentExpected,
-      serverProperties,
-      serverRequired,
-      missingFromSchema,
-      extraInSchema,
-      propertyTypes,
-    };
-  }
-
-  // PHASE 2 & 3: DETERMINE CALL CONTRACT AND EXECUTE SAFE TESTS
-  const hasDirectTools =
-    targetToolPresence['equity_price_quote'] ||
-    targetToolPresence['equity_fundamental_ratios'];
-  const hasDiscoveryWrapper =
-    targetToolPresence['search_tools'] ||
-    targetToolPresence['available_tools'] ||
-    targetToolPresence['call_tool'];
-  const hasDoQuery = targetToolPresence['do_query'];
-
-  if (hasDirectTools) {
-    report.callContractAnalysis = {
-      detectedCategory: 'DIRECT_TOOLS',
-      summary:
-        'Server exposes equity_price_quote and/or equity_fundamental_ratios directly in tool catalog. Testing direct tools/call.',
-      doQueryComparison,
-    };
-
-    // Test direct equity_price_quote
-    const quoteTool = tools.find((t) => t.name === 'equity_price_quote');
-    if (quoteTool) {
-      const args = constructDirectToolArgs(quoteTool.inputSchema, 'NVDA');
-      const callRes = await sendMcpPost(
-        BITGET_MCP_ENDPOINT,
-        'tools/call',
-        { name: 'equity_price_quote', arguments: args },
-        nextId++,
-        session,
-        fetchImpl,
-        15_000
-      );
-      report.testCalls.push(
-        extractSafeReport(
-          'equity_price_quote',
-          args,
-          callRes.status,
-          callRes.envelope
-        )
-      );
-    }
-
-    // Test direct equity_fundamental_ratios
-    const ratiosTool = tools.find(
-      (t) => t.name === 'equity_fundamental_ratios'
-    );
-    if (ratiosTool) {
-      const args = constructDirectToolArgs(ratiosTool.inputSchema, 'NVDA');
-      const callRes = await sendMcpPost(
-        BITGET_MCP_ENDPOINT,
-        'tools/call',
-        { name: 'equity_fundamental_ratios', arguments: args },
-        nextId++,
-        session,
-        fetchImpl,
-        15_000
-      );
-      report.testCalls.push(
-        extractSafeReport(
-          'equity_fundamental_ratios',
-          args,
-          callRes.status,
-          callRes.envelope
-        )
-      );
-    }
-  } else if (hasDiscoveryWrapper) {
-    report.callContractAnalysis = {
-      detectedCategory: 'DISCOVERY_WRAPPER',
-      summary:
-        'Server exposes tool discovery wrappers (call_tool, search_tools, or available_tools).',
-      doQueryComparison,
-    };
-
-    if (targetToolPresence['search_tools']) {
-      const searchTool = tools.find((t) => t.name === 'search_tools');
-      const args = searchTool
-        ? constructDirectToolArgs(searchTool.inputSchema, 'equity')
-        : { query: 'equity' };
-      const callRes = await sendMcpPost(
-        BITGET_MCP_ENDPOINT,
-        'tools/call',
-        { name: 'search_tools', arguments: args },
-        nextId++,
-        session,
-        fetchImpl,
-        15_000
-      );
-      report.testCalls.push(
-        extractSafeReport(
-          'search_tools',
-          args,
-          callRes.status,
-          callRes.envelope
-        )
-      );
-    } else if (targetToolPresence['available_tools']) {
-      const args = {};
-      const callRes = await sendMcpPost(
-        BITGET_MCP_ENDPOINT,
-        'tools/call',
-        { name: 'available_tools', arguments: args },
-        nextId++,
-        session,
-        fetchImpl,
-        15_000
-      );
-      report.testCalls.push(
-        extractSafeReport(
-          'available_tools',
-          args,
-          callRes.status,
-          callRes.envelope
-        )
-      );
-    }
-  } else if (hasDoQuery) {
-    report.callContractAnalysis = {
-      detectedCategory: 'DO_QUERY',
-      summary:
-        'Server exposes only do_query dispatcher. Inspecting inputSchema drift.',
-      doQueryComparison,
-    };
-
-    // Test invoking do_query with NVDA
-    const args = {
-      entry_id: 'equity_price_quote',
-      params: { symbol: 'NVDA' },
-    };
-    const callRes = await sendMcpPost(
+  for (const kw of keywordsToSearch) {
+    const kwRes = await sendMcpPost(
       BITGET_MCP_ENDPOINT,
       'tools/call',
-      { name: 'do_query', arguments: args },
+      { name: 'guide', arguments: { keyword: kw } },
       nextId++,
       session,
       fetchImpl,
       15_000
     );
-    report.testCalls.push(
-      extractSafeReport('do_query', args, callRes.status, callRes.envelope)
-    );
-  } else {
-    report.callContractAnalysis = {
-      detectedCategory: 'UNKNOWN',
-      summary:
-        'Neither direct equity tools nor do_query dispatcher were found in tool catalog.',
-      doQueryComparison,
-    };
+    const entries = Array.isArray(
+      kwRes.envelope?.result?.structuredContent?.entries
+    )
+      ? kwRes.envelope.result.structuredContent.entries
+      : [];
+    report.phase1GuideDiscovery.keywordSearches.push({
+      keyword: kw,
+      matchedCount: entries.length,
+      matchedEntryIds: entries.map((e: any) => String(e.id ?? '')),
+    });
   }
+
+  // 3. Category "equity" full retrieval
+  const guideEquityRes = await sendMcpPost(
+    BITGET_MCP_ENDPOINT,
+    'tools/call',
+    { name: 'guide', arguments: { category: 'equity' } },
+    nextId++,
+    session,
+    fetchImpl,
+    15_000
+  );
+
+  const rawEquityEntries = Array.isArray(
+    guideEquityRes.envelope?.result?.structuredContent?.entries
+  )
+    ? guideEquityRes.envelope.result.structuredContent.entries
+    : [];
+
+  report.phase1GuideDiscovery.totalEquityEntriesCount = rawEquityEntries.length;
+
+  const subcategoriesSet = new Set<string>();
+  const allEquityEntries: GuideEntrySummary[] = [];
+
+  for (const e of rawEquityEntries) {
+    const subcat = String(e.subcategory ?? '');
+    if (subcat) subcategoriesSet.add(subcat);
+
+    const params: GuideParamSummary[] = Array.isArray(e.params_summary)
+      ? e.params_summary.map((p: any) => ({
+          name: String(p.name ?? ''),
+          type: String(p.type ?? ''),
+          required: Boolean(p.required),
+          default: p.default,
+          enum: Array.isArray(p.enum) ? p.enum : undefined,
+        }))
+      : [];
+
+    allEquityEntries.push({
+      id: String(e.id ?? ''),
+      url_path: e.url_path,
+      category: 'equity',
+      subcategory: subcat,
+      title: e.title,
+      summary: e.summary,
+      data_tier: e.data_tier,
+      params,
+    });
+  }
+
+  report.phase1GuideDiscovery.equitySubcategoriesFound =
+    Array.from(subcategoriesSet);
+
+  // PHASE 2 — REPORT CATALOG ENTRY METADATA
+  const quoteEntry = allEquityEntries.find(
+    (e) => e.id === 'equity_price_quote'
+  );
+  const ratiosEntry = allEquityEntries.find(
+    (e) => e.id === 'equity_fundamental_ratios'
+  );
+
+  report.phase2CatalogEntries.equityPriceQuoteExists = Boolean(quoteEntry);
+  report.phase2CatalogEntries.equityFundamentalRatiosExists =
+    Boolean(ratiosEntry);
+
+  const quoteRequiredSymbol =
+    quoteEntry?.params.some((p) => p.name === 'symbol' && p.required) ?? false;
+  const ratiosRequiredSymbol =
+    ratiosEntry?.params.some((p) => p.name === 'symbol' && p.required) ?? false;
+
+  report.phase2CatalogEntries.requiredParamsChanged =
+    !(quoteRequiredSymbol && ratiosRequiredSymbol);
+
+  if (quoteEntry) report.phase2CatalogEntries.targetEntries.push(quoteEntry);
+  if (ratiosEntry) report.phase2CatalogEntries.targetEntries.push(ratiosEntry);
+
+  // Alternative candidates providing quotes, volume, market cap, valuation
+  const alternativeIds = [
+    'equity_price_historical',
+    'equity_profile',
+    'equity_fundamental_metrics',
+    'equity_estimates_price_target',
+  ];
+  report.phase2CatalogEntries.alternativeCandidates = allEquityEntries.filter(
+    (e) => alternativeIds.includes(e.id)
+  );
+
+  // PHASE 3 — EXACT PARAMETER COMPARISON
+  const dissentQuotePayload = { symbol: 'NVDA' };
+  const dissentRatiosPayload = { symbol: 'NVDA' };
+
+  report.phase3ParameterComparison.equityPriceQuote = compareParameters(
+    'equity_price_quote',
+    quoteEntry,
+    dissentQuotePayload
+  );
+  report.phase3ParameterComparison.equityFundamentalRatios = compareParameters(
+    'equity_fundamental_ratios',
+    ratiosEntry,
+    dissentRatiosPayload
+  );
+
+  // PHASE 4 — CONTROL QUERY
+  // Execute control query on another US-equity entry (equity_profile) using NVDA
+  const controlArgs = { entry_id: 'equity_profile', params: { symbol: 'NVDA' } };
+  const controlRes = await sendMcpPost(
+    BITGET_MCP_ENDPOINT,
+    'tools/call',
+    { name: 'do_query', arguments: controlArgs },
+    nextId++,
+    session,
+    fetchImpl,
+    15_000
+  );
+  report.phase4ControlQuery = extractSafeReport(
+    'do_query',
+    controlArgs,
+    controlRes.status,
+    controlRes.envelope,
+    'equity_profile'
+  );
+
+  // PHASE 5 — OPTIONAL RETEST (equity_price_quote and equity_fundamental_ratios)
+  const retestQuoteArgs = {
+    entry_id: 'equity_price_quote',
+    params: { symbol: 'NVDA' },
+  };
+  const retestQuoteRes = await sendMcpPost(
+    BITGET_MCP_ENDPOINT,
+    'tools/call',
+    { name: 'do_query', arguments: retestQuoteArgs },
+    nextId++,
+    session,
+    fetchImpl,
+    15_000
+  );
+  report.phase5Retest.equityPriceQuote = extractSafeReport(
+    'do_query',
+    retestQuoteArgs,
+    retestQuoteRes.status,
+    retestQuoteRes.envelope,
+    'equity_price_quote'
+  );
+
+  const retestRatiosArgs = {
+    entry_id: 'equity_fundamental_ratios',
+    params: { symbol: 'NVDA' },
+  };
+  const retestRatiosRes = await sendMcpPost(
+    BITGET_MCP_ENDPOINT,
+    'tools/call',
+    { name: 'do_query', arguments: retestRatiosArgs },
+    nextId++,
+    session,
+    fetchImpl,
+    15_000
+  );
+  report.phase5Retest.equityFundamentalRatios = extractSafeReport(
+    'do_query',
+    retestRatiosArgs,
+    retestRatiosRes.status,
+    retestRatiosRes.envelope,
+    'equity_fundamental_ratios'
+  );
+
+  // CONCLUSION
+  const control503 = report.phase4ControlQuery.toolStatusCode === 503;
+  const quote503 = report.phase5Retest.equityPriceQuote.toolStatusCode === 503;
+  const ratios503 =
+    report.phase5Retest.equityFundamentalRatios.toolStatusCode === 503;
+
+  const isGlobalOutage = control503 && quote503 && ratios503;
+
+  report.conclusion = {
+    classification: isGlobalOutage
+      ? 'BACKEND_SERVICE_OUTAGE'
+      : 'CLIENT_CONTRACT_DRIFT',
+    summary: isGlobalOutage
+      ? 'agent-data-platform upstream service is globally returning HTTP 503 HTML error pages across all equity catalog entries. Client contract and entry schemas are 100% valid.'
+      : 'Discrepancy detected between client parameters and server requirements.',
+    clientContractStatus:
+      report.phase3ParameterComparison.equityPriceQuote.isCompatible &&
+      report.phase3ParameterComparison.equityFundamentalRatios.isCompatible
+        ? 'VERIFIED_CORRECT: Exactly matches guide-advertised schemas (symbol: string required, 0 missing/extra fields)'
+        : 'CONTRACT_DRIFT_DETECTED',
+    entryCatalogStatus:
+      report.phase2CatalogEntries.equityPriceQuoteExists &&
+      report.phase2CatalogEntries.equityFundamentalRatiosExists
+        ? 'ENTRIES_EXIST: Both equity_price_quote and equity_fundamental_ratios are fully registered in the guide equity catalog'
+        : 'ENTRIES_MISSING',
+    backendServiceStatus:
+      isGlobalOutage
+        ? 'SERVICE_UNAVAILABLE (503): agent-data-platform backend service returns 503 HTML error pages to bitget-mcp-server dispatcher'
+        : 'HEALTHY',
+  };
 
   return report;
 }

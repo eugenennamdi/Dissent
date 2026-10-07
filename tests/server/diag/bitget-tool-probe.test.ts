@@ -1,17 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import { runBitgetToolProbe } from '@/server/diag/bitget-tool-probe';
 import { GET } from '@/app/api/diag/bitget-tools/route';
-import {
-  SANITY_MCP_INIT_RESPONSE,
-  SANITY_MCP_QUOTE_RESPONSE,
-} from '../../fixtures/bitget-mcp-nvda.fixtures';
+import { SANITY_MCP_INIT_RESPONSE } from '../../fixtures/bitget-mcp-nvda.fixtures';
 
 function okInitResponse() {
   return new Response(JSON.stringify(SANITY_MCP_INIT_RESPONSE), {
     status: 200,
     headers: {
       'Content-Type': 'application/json',
-      'mcp-session-id': 'diag-test-session-123',
+      'mcp-session-id': 'diag-test-session-456',
     },
   });
 }
@@ -20,128 +17,74 @@ function okNotificationResponse() {
   return new Response('', {
     status: 202,
     headers: {
-      'mcp-session-id': 'diag-test-session-123',
+      'mcp-session-id': 'diag-test-session-456',
     },
   });
 }
 
-describe('BitgetToolProbe diagnostic runner', () => {
-  it('detects DIRECT_TOOLS and invokes direct tools/call with safe reporting', async () => {
-    const directToolsListResponse = {
+describe('Extended BitgetToolProbe diagnostic runner', () => {
+  it('runs all 5 phases: guide discovery, parameter comparison, control query, and retest', async () => {
+    const mockToolsList = {
       jsonrpc: '2.0',
-      id: 200,
+      id: 100,
       result: {
         tools: [
           {
-            name: 'equity_price_quote',
-            description: 'Get real-time equity price quote',
-            inputSchema: {
-              type: 'object',
-              properties: {
-                symbol: { type: 'string', description: 'Stock ticker' },
-              },
-              required: ['symbol'],
-            },
+            name: 'guide',
+            description: 'List available data categories or entries',
+            inputSchema: { type: 'object' },
           },
-          {
-            name: 'equity_fundamental_ratios',
-            description: 'Get fundamental equity ratios',
-            inputSchema: {
-              type: 'object',
-              properties: {
-                symbol: { type: 'string', description: 'Stock ticker' },
-              },
-              required: ['symbol'],
-            },
-          },
-        ],
-      },
-    };
-
-    const mockFetch = (async (_: URL | RequestInfo, init?: RequestInit) => {
-      const bodyStr = typeof init?.body === 'string' ? init.body : '';
-      const bodyJson = bodyStr ? JSON.parse(bodyStr) : {};
-
-      if (bodyJson.method === 'initialize') {
-        return okInitResponse();
-      }
-      if (bodyJson.method === 'notifications/initialized') {
-        return okNotificationResponse();
-      }
-      if (bodyJson.method === 'tools/list') {
-        return new Response(JSON.stringify(directToolsListResponse), {
-          status: 200,
-          headers: {
-            'Content-Type': 'application/json',
-            'mcp-session-id': 'diag-test-session-123',
-          },
-        });
-      }
-      if (bodyJson.method === 'tools/call') {
-        // Return valid tool result
-        return new Response(JSON.stringify(SANITY_MCP_QUOTE_RESPONSE), {
-          status: 200,
-          headers: {
-            'Content-Type': 'application/json',
-            'mcp-session-id': 'diag-test-session-123',
-          },
-        });
-      }
-
-      return new Response('Not found', { status: 404 });
-    }) as typeof fetch;
-
-    const report = await runBitgetToolProbe(mockFetch);
-
-    expect(report.lifecycle.initialized).toBe(true);
-    expect(report.lifecycle.negotiatedProtocolVersion).toBe('2025-03-26');
-    expect(report.lifecycle.hasSessionId).toBe(true);
-    // Crucial check: session ID string must NOT be logged in report
-    expect(JSON.stringify(report)).not.toContain('diag-test-session-123');
-
-    expect(report.toolDiscovery.totalToolsCount).toBe(2);
-    expect(report.toolDiscovery.targetToolPresence.equity_price_quote).toBe(true);
-    expect(report.toolDiscovery.targetToolPresence.equity_fundamental_ratios).toBe(true);
-    expect(report.toolDiscovery.targetToolPresence.do_query).toBe(false);
-
-    expect(report.callContractAnalysis.detectedCategory).toBe('DIRECT_TOOLS');
-    expect(report.testCalls.length).toBe(2);
-
-    const quoteCall = report.testCalls.find((c) => c.toolName === 'equity_price_quote');
-    expect(quoteCall).toBeDefined();
-    expect(quoteCall?.argumentsShape).toEqual({ symbol: 'string(val=NVDA)' });
-    expect(quoteCall?.httpStatus).toBe(200);
-    expect(quoteCall?.hasJsonRpcError).toBe(false);
-    expect(quoteCall?.hasStructuredContent).toBe(true);
-    expect(quoteCall?.resultsNonEmpty).toBe(true);
-    expect(quoteCall?.topLevelFieldNames).toContain('structuredContent');
-    // Ensure raw prices/values are NOT present in the test call report
-    expect(JSON.stringify(quoteCall)).not.toContain('120.5');
-  });
-
-  it('detects DO_QUERY dispatcher and performs field comparison', async () => {
-    const doQueryListResponse = {
-      jsonrpc: '2.0',
-      id: 200,
-      result: {
-        tools: [
           {
             name: 'do_query',
-            description: 'Legacy Bitget query dispatcher',
+            description: 'Execute catalog entry by id',
             inputSchema: {
               type: 'object',
               properties: {
                 entry_id: { type: 'string' },
                 params: { type: 'object' },
-                optional_flag: { type: 'boolean' },
               },
-              required: ['entry_id', 'params'],
+              required: ['entry_id'],
             },
           },
         ],
       },
     };
 
+    const mockCategories = [
+      { key: 'crypto', name: '加密货币', entry_count: 39 },
+      { key: 'equity', name: '美股', entry_count: 22 },
+    ];
+
+    const mockEquityEntries = [
+      {
+        id: 'equity_price_quote',
+        subcategory: '行情',
+        title: '股票基本信息 / 实时报价',
+        summary: '获取美股的实时报价与基本信息',
+        data_tier: 'free',
+        params_summary: [{ name: 'symbol', required: true, type: 'string' }],
+      },
+      {
+        id: 'equity_fundamental_ratios',
+        subcategory: '基本面（含财报）',
+        title: '估值指标',
+        summary: '获取公司估值比率指标',
+        data_tier: 'free',
+        params_summary: [
+          { name: 'symbol', required: true, type: 'string' },
+          { name: 'limit', required: false, type: 'integer' },
+        ],
+      },
+      {
+        id: 'equity_profile',
+        subcategory: '基本面（含财报）',
+        title: '公司基本信息',
+        summary: '获取公司基本信息',
+        data_tier: 'free',
+        params_summary: [{ name: 'symbol', required: true, type: 'string' }],
+      },
+    ];
+
     const mockFetch = (async (_: URL | RequestInfo, init?: RequestInit) => {
       const bodyStr = typeof init?.body === 'string' ? init.body : '';
       const bodyJson = bodyStr ? JSON.parse(bodyStr) : {};
@@ -149,91 +92,124 @@ describe('BitgetToolProbe diagnostic runner', () => {
       if (bodyJson.method === 'initialize') return okInitResponse();
       if (bodyJson.method === 'notifications/initialized') return okNotificationResponse();
       if (bodyJson.method === 'tools/list') {
-        return new Response(JSON.stringify(doQueryListResponse), {
+        return new Response(JSON.stringify(mockToolsList), {
           status: 200,
           headers: { 'Content-Type': 'application/json' },
         });
       }
+
       if (bodyJson.method === 'tools/call') {
-        return new Response(
-          JSON.stringify({
-            jsonrpc: '2.0',
-            id: bodyJson.id,
-            result: {
-              status_code: 503,
-              success: false,
-              msg: 'tool unavailable',
-            },
-          }),
-          { status: 200, headers: { 'Content-Type': 'application/json' } }
-        );
-      }
-      return new Response('Not found', { status: 404 });
-    }) as typeof fetch;
+        const toolName = bodyJson.params?.name;
+        const args = bodyJson.params?.arguments || {};
 
-    const report = await runBitgetToolProbe(mockFetch);
+        if (toolName === 'guide') {
+          if (!args.category && !args.keyword) {
+            return new Response(
+              JSON.stringify({
+                jsonrpc: '2.0',
+                id: bodyJson.id,
+                result: {
+                  structuredContent: { categories: mockCategories },
+                },
+              }),
+              { status: 200, headers: { 'Content-Type': 'application/json' } }
+            );
+          }
+          if (args.keyword) {
+            return new Response(
+              JSON.stringify({
+                jsonrpc: '2.0',
+                id: bodyJson.id,
+                result: {
+                  structuredContent: { entries: [] },
+                },
+              }),
+              { status: 200, headers: { 'Content-Type': 'application/json' } }
+            );
+          }
+          if (args.category === 'equity') {
+            return new Response(
+              JSON.stringify({
+                jsonrpc: '2.0',
+                id: bodyJson.id,
+                result: {
+                  structuredContent: { entries: mockEquityEntries },
+                },
+              }),
+              { status: 200, headers: { 'Content-Type': 'application/json' } }
+            );
+          }
+        }
 
-    expect(report.callContractAnalysis.detectedCategory).toBe('DO_QUERY');
-    const comparison = report.callContractAnalysis.doQueryComparison;
-    expect(comparison).toBeDefined();
-    expect(comparison?.isExposed).toBe(true);
-    expect(comparison?.missingFromSchema).toEqual([]);
-    expect(comparison?.extraInSchema).toEqual(['optional_flag']);
-    expect(comparison?.serverProperties).toContain('entry_id');
-    expect(comparison?.serverProperties).toContain('params');
-
-    expect(report.testCalls.length).toBe(1);
-    const testCall = report.testCalls[0];
-    expect(testCall?.toolName).toBe('do_query');
-    expect(testCall?.toolStatusCode).toBe(503);
-    expect(testCall?.toolSuccess).toBe(false);
-  });
-
-  it('paginates tools/list when nextCursor is returned', async () => {
-    let listCallCount = 0;
-    const mockFetch = (async (_: URL | RequestInfo, init?: RequestInit) => {
-      const bodyStr = typeof init?.body === 'string' ? init.body : '';
-      const bodyJson = bodyStr ? JSON.parse(bodyStr) : {};
-
-      if (bodyJson.method === 'initialize') return okInitResponse();
-      if (bodyJson.method === 'notifications/initialized') return okNotificationResponse();
-      if (bodyJson.method === 'tools/list') {
-        listCallCount++;
-        if (listCallCount === 1) {
+        if (toolName === 'do_query') {
           return new Response(
             JSON.stringify({
               jsonrpc: '2.0',
               id: bodyJson.id,
               result: {
-                tools: [{ name: 'tool_page_1', inputSchema: {} }],
-                nextCursor: 'cursor_page_2',
+                structuredContent: {
+                  status_code: 503,
+                  success: false,
+                  data: '<html><head><title>503 Service Temporarily Unavailable</title></head><body><h1>503</h1></body></html>',
+                },
               },
             }),
             { status: 200, headers: { 'Content-Type': 'application/json' } }
           );
         }
-        return new Response(
-          JSON.stringify({
-            jsonrpc: '2.0',
-            id: bodyJson.id,
-            result: {
-              tools: [{ name: 'tool_page_2', inputSchema: {} }],
-            },
-          }),
-          { status: 200, headers: { 'Content-Type': 'application/json' } }
-        );
       }
+
       return new Response('Not found', { status: 404 });
     }) as typeof fetch;
 
     const report = await runBitgetToolProbe(mockFetch);
-    expect(listCallCount).toBe(2);
-    expect(report.toolDiscovery.pagesFetched).toBe(2);
-    expect(report.toolDiscovery.totalToolsCount).toBe(2);
-    expect(report.toolDiscovery.tools.map((t) => t.name)).toEqual([
-      'tool_page_1',
-      'tool_page_2',
-    ]);
+
+    // Lifecycle
+    expect(report.lifecycle.initialized).toBe(true);
+    expect(report.lifecycle.negotiatedProtocolVersion).toBe('2025-03-26');
+    expect(report.lifecycle.hasSessionId).toBe(true);
+    expect(JSON.stringify(report)).not.toContain('diag-test-session-456');
+
+    // Phase 1: Guide Discovery
+    expect(report.phase1GuideDiscovery.topLevelCategories.length).toBe(2);
+    expect(report.phase1GuideDiscovery.totalEquityEntriesCount).toBe(3);
+    expect(report.phase1GuideDiscovery.equitySubcategoriesFound).toContain('行情');
+    expect(report.phase1GuideDiscovery.equitySubcategoriesFound).toContain('基本面（含财报）');
+
+    // Phase 2: Catalog Entries
+    expect(report.phase2CatalogEntries.equityPriceQuoteExists).toBe(true);
+    expect(report.phase2CatalogEntries.equityFundamentalRatiosExists).toBe(true);
+    expect(report.phase2CatalogEntries.requiredParamsChanged).toBe(false);
+    expect(report.phase2CatalogEntries.targetEntries.length).toBe(2);
+
+    // Phase 3: Parameter Comparison
+    const quoteComparison = report.phase3ParameterComparison.equityPriceQuote;
+    expect(quoteComparison.isCompatible).toBe(true);
+    expect(quoteComparison.missing).toEqual([]);
+    expect(quoteComparison.extra).toEqual([]);
+
+    const ratiosComparison = report.phase3ParameterComparison.equityFundamentalRatios;
+    expect(ratiosComparison.isCompatible).toBe(true);
+    expect(ratiosComparison.missing).toEqual([]);
+    expect(ratiosComparison.extra).toEqual([]);
+
+    // Phase 4: Control Query
+    expect(report.phase4ControlQuery.entryId).toBe('equity_profile');
+    expect(report.phase4ControlQuery.toolStatusCode).toBe(503);
+    expect(report.phase4ControlQuery.toolSuccess).toBe(false);
+    expect(report.phase4ControlQuery.isHtmlError).toBe(true);
+
+    // Phase 5: Retests
+    expect(report.phase5Retest.equityPriceQuote.toolStatusCode).toBe(503);
+    expect(report.phase5Retest.equityPriceQuote.isHtmlError).toBe(true);
+    expect(report.phase5Retest.equityFundamentalRatios.toolStatusCode).toBe(503);
+    expect(report.phase5Retest.equityFundamentalRatios.isHtmlError).toBe(true);
+
+    // Conclusion
+    expect(report.conclusion.classification).toBe('BACKEND_SERVICE_OUTAGE');
+    expect(report.conclusion.clientContractStatus).toContain('VERIFIED_CORRECT');
+    expect(report.conclusion.entryCatalogStatus).toContain('ENTRIES_EXIST');
+    expect(report.conclusion.backendServiceStatus).toContain('SERVICE_UNAVAILABLE (503)');
   });
 });
 
