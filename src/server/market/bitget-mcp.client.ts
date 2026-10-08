@@ -368,7 +368,7 @@ export class BitgetMcpClient {
         throw DissentError.externalProviderError(
           'Bitget MCP',
           `Bitget MCP initialize returned HTTP ${res.status}`,
-          { statusCode: res.status }
+          { statusCode: res.status, stage: 'initialize' }
         );
       }
 
@@ -540,7 +540,7 @@ export class BitgetMcpClient {
         throw DissentError.externalProviderError(
           'Bitget MCP',
           `Bitget MCP notifications/initialized returned HTTP ${res.status}`,
-          { statusCode: res.status }
+          { statusCode: res.status, stage: 'notifications_initialized' }
         );
       }
 
@@ -830,6 +830,7 @@ export class BitgetMcpClient {
             statusCode: struct.status_code,
             toolError: struct.error,
             entryId,
+            stage: 'tool_call',
           }
         );
       }

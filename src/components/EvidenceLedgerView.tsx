@@ -142,6 +142,18 @@ function getSourceBadge(sourceName: string) {
       badgeClass: 'bg-stone-900 text-stone-100 border-stone-800',
     };
   }
+  if (lower.includes('reality')) {
+    return {
+      label: 'Bitget Reality',
+      badgeClass: 'bg-stone-800 text-stone-100 border-stone-700',
+    };
+  }
+  if (lower.includes('eulerpool')) {
+    return {
+      label: 'Eulerpool',
+      badgeClass: 'bg-blue-900 text-blue-100 border-blue-800',
+    };
+  }
   if (lower.includes('bitget')) {
     return {
       label: 'Bitget',

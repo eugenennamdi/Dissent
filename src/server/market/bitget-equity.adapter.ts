@@ -33,12 +33,43 @@ import {
   sha256Canonical,
   validateEvidence,
 } from './evidence.factory';
+import { FallbackEquityAdapter } from './fallback-equity.adapter';
 
 export interface BitgetEquityAdapterConfig {
   client?: BitgetMcpClient;
+  fallbackAdapter?: FallbackEquityAdapter | null;
   timeoutMs?: number;
   fetch?: typeof fetch;
   now?: () => Date;
+  eulerpoolApiKey?: string;
+}
+
+/**
+ * Evaluates whether an error represents a proven upstream-service 503 outage
+ * from Bitget MCP (toolStatusCode === 503 && toolSuccess === false).
+ *
+ * Strict invariant: Activates ONLY on tool-level 503.
+ * Fails closed for:
+ * - schema validation failures (kind: 'invalid_response')
+ * - malformed MCP envelopes
+ * - unsupported markets
+ * - local programming errors
+ * - timeouts
+ * - non-503 status codes
+ */
+export function isMcpUpstreamUnavailable(error: unknown): boolean {
+  if (error instanceof DissentError) {
+    if (error.code === 'EXTERNAL_PROVIDER_ERROR') {
+      const details = error.details as Record<string, unknown> | undefined;
+      return (
+        details?.statusCode === 503 &&
+        details?.kind !== 'invalid_response' &&
+        details?.stage !== 'initialize' &&
+        details?.stage !== 'notifications_initialized'
+      );
+    }
+  }
+  return false;
 }
 
 /**
@@ -54,6 +85,7 @@ export interface BitgetEquityAdapterConfig {
  */
 export class BitgetEquityAdapter implements MarketDeskPort {
   private readonly client: BitgetMcpClient;
+  private readonly fallbackAdapter: FallbackEquityAdapter | null;
   private readonly now: () => Date;
 
   constructor(config: BitgetEquityAdapterConfig = {}) {
@@ -63,6 +95,14 @@ export class BitgetEquityAdapter implements MarketDeskPort {
         timeoutMs: config.timeoutMs,
         fetch: config.fetch,
       });
+    this.fallbackAdapter =
+      config.fallbackAdapter !== undefined
+        ? config.fallbackAdapter
+        : new FallbackEquityAdapter({
+            fetch: config.fetch,
+            now: config.now,
+            eulerpoolApiKey: config.eulerpoolApiKey,
+          });
     this.now = config.now ?? (() => new Date());
   }
 
@@ -99,15 +139,43 @@ export class BitgetEquityAdapter implements MarketDeskPort {
       const quoteItems = await this.collectEquityQuote(thesis.id, market, symbol);
       items.push(...quoteItems);
     } catch (error: unknown) {
-      const gap = this.toGap(market, 'EQUITY_QUOTE', error);
-      logMcpDiag('evidence_gap_created', {
-        market,
-        dimension: gap.dimension,
-        reason: gap.reason,
-        errorCode: error instanceof DissentError ? error.code : undefined,
-        errorMessage: sanitizeProviderError(gap.message),
-      });
-      gaps.push(gap);
+      if (this.fallbackAdapter && isMcpUpstreamUnavailable(error)) {
+        logMcpDiag('fallback_quote_activated', {
+          market,
+          symbol,
+          reason: 'mcp_upstream_unavailable_503',
+        });
+        try {
+          const fallbackQuoteItems = await this.fallbackAdapter.collectFallbackQuote(
+            thesis.id,
+            market,
+            symbol
+          );
+          items.push(...fallbackQuoteItems);
+        } catch (fallbackError: unknown) {
+          const gap = this.toGap(market, 'EQUITY_QUOTE', fallbackError);
+          logMcpDiag('evidence_gap_created', {
+            market,
+            dimension: gap.dimension,
+            reason: gap.reason,
+            errorCode:
+              fallbackError instanceof DissentError ? fallbackError.code : undefined,
+            errorMessage: sanitizeProviderError(gap.message),
+            source: 'fallback',
+          });
+          gaps.push(gap);
+        }
+      } else {
+        const gap = this.toGap(market, 'EQUITY_QUOTE', error);
+        logMcpDiag('evidence_gap_created', {
+          market,
+          dimension: gap.dimension,
+          reason: gap.reason,
+          errorCode: error instanceof DissentError ? error.code : undefined,
+          errorMessage: sanitizeProviderError(gap.message),
+        });
+        gaps.push(gap);
+      }
     }
 
     // Query 2: equity_fundamental_ratios
@@ -115,15 +183,44 @@ export class BitgetEquityAdapter implements MarketDeskPort {
       const valuationItems = await this.collectEquityValuation(thesis.id, market, symbol);
       items.push(...valuationItems);
     } catch (error: unknown) {
-      const gap = this.toGap(market, 'EQUITY_VALUATION', error);
-      logMcpDiag('evidence_gap_created', {
-        market,
-        dimension: gap.dimension,
-        reason: gap.reason,
-        errorCode: error instanceof DissentError ? error.code : undefined,
-        errorMessage: sanitizeProviderError(gap.message),
-      });
-      gaps.push(gap);
+      if (this.fallbackAdapter && isMcpUpstreamUnavailable(error)) {
+        logMcpDiag('fallback_valuation_activated', {
+          market,
+          symbol,
+          reason: 'mcp_upstream_unavailable_503',
+        });
+        try {
+          const fallbackValuationItems =
+            await this.fallbackAdapter.collectFallbackValuation(
+              thesis.id,
+              market,
+              symbol
+            );
+          items.push(...fallbackValuationItems);
+        } catch (fallbackError: unknown) {
+          const gap = this.toGap(market, 'EQUITY_VALUATION', fallbackError);
+          logMcpDiag('evidence_gap_created', {
+            market,
+            dimension: gap.dimension,
+            reason: gap.reason,
+            errorCode:
+              fallbackError instanceof DissentError ? fallbackError.code : undefined,
+            errorMessage: sanitizeProviderError(gap.message),
+            source: 'fallback',
+          });
+          gaps.push(gap);
+        }
+      } else {
+        const gap = this.toGap(market, 'EQUITY_VALUATION', error);
+        logMcpDiag('evidence_gap_created', {
+          market,
+          dimension: gap.dimension,
+          reason: gap.reason,
+          errorCode: error instanceof DissentError ? error.code : undefined,
+          errorMessage: sanitizeProviderError(gap.message),
+        });
+        gaps.push(gap);
+      }
     }
 
     const assembledAt = this.now().toISOString();
