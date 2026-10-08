@@ -159,7 +159,7 @@ function RealityCheckPrototypeContent() {
             <div>
               <h2 className="text-lg font-semibold text-white tracking-tight">The Adversarial Debate</h2>
               <p className="text-xs text-zinc-400">
-                Constructive thesis champion vs. adversarial stress-test, backed strictly by exchange evidence.
+                Constructive thesis champion vs. adversarial stress-test, backed strictly by sourced market evidence.
               </p>
             </div>
             <span className="font-mono text-xs text-zinc-400">

@@ -184,7 +184,7 @@ export function VariantA({
                 <div>
                   <h2 className="text-base sm:text-lg font-semibold text-white tracking-tight">The Adversarial Debate</h2>
                   <p className="text-xs text-zinc-400">
-                    Constructive thesis champion vs. adversarial stress-test, backed strictly by exchange evidence.
+                    Constructive thesis champion vs. adversarial stress-test, backed strictly by sourced market evidence.
                   </p>
                 </div>
                 <Badge variant="outline" className="w-fit text-[10px] sm:text-xs font-mono text-zinc-400 border-zinc-800">

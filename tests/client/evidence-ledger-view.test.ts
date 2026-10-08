@@ -149,4 +149,73 @@ describe('EvidenceLedgerView Component', () => {
     expect(html).toContain('Supporting');
     expect(html).toContain('Contradicting');
   });
+
+  it('derives source groups dynamically from actual provenance without hardcoding Desk Analytics', () => {
+    const eulerpoolItem1: EvidenceV1 = {
+      ...longIdItem,
+      id: 'ev_euler_1',
+      provenance: {
+        ...longIdItem.provenance,
+        sourceName: 'Eulerpool Equity API',
+        sourceType: 'EXCHANGE_API',
+      },
+    };
+    const eulerpoolItem2: EvidenceV1 = {
+      ...longIdItem,
+      id: 'ev_euler_2',
+      provenance: {
+        ...longIdItem.provenance,
+        sourceName: 'Eulerpool Equity API',
+        sourceType: 'EXCHANGE_API',
+      },
+    };
+    const bitgetRealityItems: EvidenceV1[] = Array.from({ length: 6 }, (_, i) => ({
+      ...openInterestItem,
+      id: `ev_reality_${i}`,
+      provenance: {
+        ...openInterestItem.provenance,
+        sourceName: 'Bitget Reality Reference API',
+        sourceType: 'PRIMARY_DOCUMENT',
+      },
+    }));
+
+    const fallbackLedger: EvidenceLedgerV1 = {
+      id: 'led_fallback_test',
+      thesisId: 'th_nvda',
+      items: [eulerpoolItem1, eulerpoolItem2, ...bitgetRealityItems],
+      summary: {
+        totalCount: 8,
+        supportingCount: 8,
+        contradictingCount: 0,
+        neutralCount: 0,
+        staleCountAtAssembly: 0,
+        categoriesPresent: ['PRICE_ACTION', 'VALUATION_METRIC'],
+      },
+      assembledAt: now,
+      schemaVersion: 1,
+    };
+
+    const html = cleanHtml(
+      renderToString(
+        React.createElement(EvidenceLedgerView, {
+          ledger: fallbackLedger,
+          onSelectEvidence: () => {},
+        })
+      )
+    );
+
+    // Truthful summary copy without hard-coded provider names or counts in prose
+    expect(html).toContain(
+      'Empirical observations gathered from verified market-data sources and represented in the Dissent evidence ledger.'
+    );
+
+    // Total and actual sources rendered
+    expect(html).toContain('8');
+    expect(html).toContain('Total');
+    expect(html).toContain('Eulerpool (2)');
+    expect(html).toContain('Bitget Reality (6)');
+
+    // Invariant: No Desk Analytics when no derived analytics items exist
+    expect(html).not.toContain('Desk Analytics');
+  });
 });

@@ -410,7 +410,7 @@ export function BriefView({
               <div>
                 <h2 className="text-base sm:text-lg font-semibold text-foreground tracking-tight">The Adversarial Debate</h2>
                 <p className="text-xs text-muted-foreground">
-                  Constructive thesis champion vs. adversarial stress-test, backed strictly by exchange evidence.
+                  Constructive thesis champion vs. adversarial stress-test, backed strictly by sourced market evidence.
                 </p>
               </div>
 

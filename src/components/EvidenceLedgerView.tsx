@@ -134,12 +134,12 @@ function formatShortEvidenceId(id: string): string {
 /**
  * Categorizes source into clean badge labels.
  */
-function getSourceBadge(sourceName: string) {
+function getSourceBadge(sourceName: string, sourceType?: string) {
   const lower = sourceName.toLowerCase();
-  if (lower.includes('mcp')) {
+  if (lower.includes('eulerpool')) {
     return {
-      label: 'Bitget MCP',
-      badgeClass: 'bg-stone-900 text-stone-100 border-stone-800',
+      label: 'Eulerpool',
+      badgeClass: 'bg-blue-900 text-blue-100 border-blue-800',
     };
   }
   if (lower.includes('reality')) {
@@ -148,10 +148,21 @@ function getSourceBadge(sourceName: string) {
       badgeClass: 'bg-stone-800 text-stone-100 border-stone-700',
     };
   }
-  if (lower.includes('eulerpool')) {
+  if (lower.includes('mcp')) {
     return {
-      label: 'Eulerpool',
-      badgeClass: 'bg-blue-900 text-blue-100 border-blue-800',
+      label: 'Bitget MCP',
+      badgeClass: 'bg-stone-900 text-stone-100 border-stone-800',
+    };
+  }
+  if (
+    sourceType === 'DERIVED_ANALYTICS' ||
+    lower.includes('analytics') ||
+    lower.includes('desk') ||
+    lower.includes('engine')
+  ) {
+    return {
+      label: 'Desk Analytics',
+      badgeClass: 'bg-stone-100 text-stone-700 border-stone-200/90',
     };
   }
   if (lower.includes('bitget')) {
@@ -161,7 +172,7 @@ function getSourceBadge(sourceName: string) {
     };
   }
   return {
-    label: 'Desk Analytics',
+    label: sourceName.trim() || 'Desk Analytics',
     badgeClass: 'bg-stone-100 text-stone-700 border-stone-200/90',
   };
 }
@@ -280,7 +291,7 @@ export function EvidenceLedgerView({
   className = '',
 }: EvidenceLedgerViewProps) {
   const [searchQuery, setSearchQuery] = useState('');
-  const [sourceFilter, setSourceFilter] = useState<'ALL' | 'BITGET' | 'DESK'>('ALL');
+  const [sourceFilter, setSourceFilter] = useState<string>('ALL');
   const [stanceFilter, setStanceFilter] = useState<'ALL' | 'SUPPORTING' | 'CONTRADICTING' | 'NEUTRAL'>('ALL');
   const [marketFilter, setMarketFilter] = useState<string>('ALL');
 
@@ -288,11 +299,19 @@ export function EvidenceLedgerView({
 
   // Counts for summary ribbon
   const totalCount = items.length;
-  const bitgetCount = items.filter((i) => i.provenance.sourceName.toLowerCase().includes('bitget')).length;
-  const deskCount = totalCount - bitgetCount;
   const supportingCount = items.filter((i) => i.stance === 'SUPPORTING').length;
   const contradictingCount = items.filter((i) => i.stance === 'CONTRADICTING').length;
   const neutralCount = items.filter((i) => i.stance === 'NEUTRAL').length;
+
+  // Source groups dynamically derived from actual item provenance
+  const sourceGroups = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const item of items) {
+      const label = getSourceBadge(item.provenance.sourceName, item.provenance.sourceType).label;
+      map.set(label, (map.get(label) ?? 0) + 1);
+    }
+    return Array.from(map.entries()).map(([label, count]) => ({ label, count }));
+  }, [items]);
 
   // Unique markets in ledger
   const markets = useMemo(() => {
@@ -309,9 +328,10 @@ export function EvidenceLedgerView({
   const filteredItems = useMemo(() => {
     return items.filter((item) => {
       // Source filter
-      const isBitget = item.provenance.sourceName.toLowerCase().includes('bitget');
-      if (sourceFilter === 'BITGET' && !isBitget) return false;
-      if (sourceFilter === 'DESK' && isBitget) return false;
+      if (sourceFilter !== 'ALL') {
+        const itemSourceLabel = getSourceBadge(item.provenance.sourceName, item.provenance.sourceType).label;
+        if (itemSourceLabel !== sourceFilter) return false;
+      }
 
       // Stance filter
       if (stanceFilter !== 'ALL' && item.stance !== stanceFilter) return false;
@@ -345,7 +365,7 @@ export function EvidenceLedgerView({
             Full Verifiable Evidence Ledger
           </h2>
           <p className="text-xs text-stone-500 max-w-2xl leading-relaxed">
-            All {ledger.summary.totalCount} empirical observations gathered from Bitget MCP services and deterministic desk analytics. Every observation is cryptographically grounded in verifiable market state.
+            Empirical observations gathered from verified market-data sources and represented in the Dissent evidence ledger. Every observation is cryptographically grounded in verifiable market state.
           </p>
         </div>
 
@@ -354,12 +374,14 @@ export function EvidenceLedgerView({
           <span className="px-2.5 py-1 rounded-md bg-stone-100 border border-stone-200 text-stone-700 font-medium">
             <strong className="text-stone-900">{totalCount}</strong> Total
           </span>
-          <span className="px-2.5 py-1 rounded-md bg-stone-100 border border-stone-200 text-stone-700 font-medium">
-            <strong className="text-stone-900">{bitgetCount}</strong> Bitget
-          </span>
-          <span className="px-2.5 py-1 rounded-md bg-stone-100 border border-stone-200 text-stone-700 font-medium">
-            <strong className="text-stone-900">{deskCount}</strong> Desk Analytics
-          </span>
+          {sourceGroups.map(({ label, count }) => (
+            <span
+              key={label}
+              className="px-2.5 py-1 rounded-md bg-stone-100 border border-stone-200 text-stone-700 font-medium"
+            >
+              <strong className="text-stone-900">{count}</strong> {label}
+            </span>
+          ))}
         </div>
       </div>
 
@@ -403,30 +425,21 @@ export function EvidenceLedgerView({
             >
               All ({totalCount})
             </button>
-            <button
-              type="button"
-              onClick={() => setSourceFilter('BITGET')}
-              className={cn(
-                'px-2.5 py-1 rounded-md text-[11px] font-medium transition-colors cursor-pointer',
-                sourceFilter === 'BITGET'
-                  ? 'bg-stone-900 text-stone-100 shadow-2xs'
-                  : 'bg-white text-stone-600 border border-stone-200 hover:bg-stone-100'
-              )}
-            >
-              Bitget ({bitgetCount})
-            </button>
-            <button
-              type="button"
-              onClick={() => setSourceFilter('DESK')}
-              className={cn(
-                'px-2.5 py-1 rounded-md text-[11px] font-medium transition-colors cursor-pointer',
-                sourceFilter === 'DESK'
-                  ? 'bg-stone-900 text-stone-100 shadow-2xs'
-                  : 'bg-white text-stone-600 border border-stone-200 hover:bg-stone-100'
-              )}
-            >
-              Desk Analytics ({deskCount})
-            </button>
+            {sourceGroups.map(({ label, count }) => (
+              <button
+                key={label}
+                type="button"
+                onClick={() => setSourceFilter(label)}
+                className={cn(
+                  'px-2.5 py-1 rounded-md text-[11px] font-medium transition-colors cursor-pointer',
+                  sourceFilter === label
+                    ? 'bg-stone-900 text-stone-100 shadow-2xs'
+                    : 'bg-white text-stone-600 border border-stone-200 hover:bg-stone-100'
+                )}
+              >
+                {label} ({count})
+              </button>
+            ))}
           </div>
         </div>
 
@@ -550,7 +563,7 @@ export function EvidenceLedgerView({
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
           {filteredItems.map((ev) => {
-            const sourceBadge = getSourceBadge(ev.provenance.sourceName);
+            const sourceBadge = getSourceBadge(ev.provenance.sourceName, ev.provenance.sourceType);
             const stanceBadge = getStanceBadge(ev.stance);
             const { formattedValue, colorClass } = formatCardValue(ev);
 

@@ -622,7 +622,7 @@ export function materializeStressResearch(input: {
         observableEvent: `If observed: ${condition.observableEvent}`,
         verificationSource:
           condition.verificationSourceKind === 'BITGET_MARKET_DATA'
-            ? 'Bitget observations represented in the Dissent evidence ledger'
+            ? 'Observations represented in the Dissent evidence ledger'
             : 'A future primary source must be added to the Dissent evidence ledger before verification',
         expectedWindow: deriveStressExpectedWindow(input.thesis),
         urgency: 'THESIS_REVIEW',
