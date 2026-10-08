@@ -551,23 +551,18 @@ describe('BitgetMcpClient retry and cooldown behavior', () => {
 
       await expect(client.initialize()).rejects.toThrow();
 
-      const diagLogs = logs.filter((l) => l.startsWith('[DISSENT_MCP_DIAG]'));
-      expect(diagLogs.length).toBeGreaterThan(0);
+      // Invariant: No temporary verbose MCP diagnostics are emitted in production
+      const diagLogs = logs.filter((l) => l.includes('[DISSENT_MCP_DIAG]'));
+      expect(diagLogs).toHaveLength(0);
 
-      for (const log of diagLogs) {
-        expect(log).not.toContain('ultra-secret-session-token-999');
-        expect(log).not.toContain('\n');
-        expect(log).not.toContain('\r');
-      }
-
-      const initLog = diagLogs.find((l) => l.includes('initialize_response'));
-      expect(initLog).toBeDefined();
-      const match = initLog!.match(/\[DISSENT_MCP_DIAG\] initialize_response: (.*)/);
-      expect(match).toBeDefined();
-      const jsonText = match?.[1] ?? '{}';
-      const parsed = JSON.parse(jsonText);
-      expect(parsed.jsonRpcErrorMessage.length).toBeLessThanOrEqual(200);
-      expect(parsed.jsonRpcErrorMessage.endsWith('...')).toBe(true);
+      // Invariant: Provider error sanitization strips newlines and bounds length
+      const sanitized = sanitizeProviderError(longError);
+      expect(sanitized).toBeDefined();
+      expect(sanitized!).not.toContain('ultra-secret-session-token-999');
+      expect(sanitized!).not.toContain('\n');
+      expect(sanitized!).not.toContain('\r');
+      expect(sanitized!.length).toBeLessThanOrEqual(200);
+      expect(sanitized!.endsWith('...')).toBe(true);
     } finally {
       logSpy.mockRestore();
     }

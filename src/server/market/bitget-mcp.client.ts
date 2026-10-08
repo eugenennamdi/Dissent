@@ -22,10 +22,10 @@ export type SupportedMcpProtocolVersion =
 
 /**
  * Structured diagnostic logger for MCP boundaries.
- * Emits safe metadata only (no secrets, prompts, thesis text, session IDs, market values, or raw bodies).
+ * ponytail: temporary verbose [DISSENT_MCP_DIAG] console telemetry removed for production.
  */
-export function logMcpDiag(event: string, data: Record<string, unknown>): void {
-  console.log(`[DISSENT_MCP_DIAG] ${event}: ${JSON.stringify(data)}`);
+export function logMcpDiag(_event: string, _data: Record<string, unknown>): void {
+  // Production: verbose MCP diagnostic logging removed
 }
 
 /**
